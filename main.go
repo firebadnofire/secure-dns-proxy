@@ -21,6 +21,7 @@ import (
 
 const (
 	relativeUpstreamConfPath = "../etc/secure-dns-proxy/upstreams.conf"
+	systemFallbackUpstreamConfPath = "/etc/secure-dns-proxy/upstreams.conf"
 )
 
 var (
@@ -43,7 +44,12 @@ func loadUpstreams(relPath string) []string {
 	absPath := filepath.Join(getExecutableDir(), relPath)
 	file, err := os.Open(absPath)
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to open upstream config: %v", err)
+		log.Printf("[WARN] Failed to open local upstream config at %s: %v", absPath, err)
+		log.Printf("[INFO] Falling back to system config at %s", systemFallbackUpstreamConfPath)
+		file, err = os.Open(systemFallbackUpstreamConfPath)
+		if err != nil {
+			log.Fatalf("[FATAL] Failed to open fallback upstream config: %v", err)
+		}
 	}
 	defer file.Close()
 
@@ -196,6 +202,9 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	case strings.HasPrefix(upstream, "dns://"):
 		c := new(dns.Client)
 		address := strings.TrimPrefix(upstream, "dns://")
+		if !strings.Contains(address, ":") {
+			address += ":53"
+		}
 		resp, _, err = c.Exchange(r, address)
 	case strings.HasPrefix(upstream, "https://"):
 		resp, err = forwardDNSOverHTTPS(upstream, r)
