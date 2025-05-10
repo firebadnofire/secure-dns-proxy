@@ -14,8 +14,10 @@ Build instructions:
 ```
 git clone https://codeberg.org/firebadnofire/secure-dns-proxy
 cd secure-dns-proxy
-CHANGE ME LATER YOU LAZY BUM
+make
 ```
+
+The compiled build will be put in `dist/` as a `tar.gz` containing a portable build. You may run `sudo tar --strip-components=1 -C / -xaf file.tar.gz` to install it to your system
 
 # Notes
 
