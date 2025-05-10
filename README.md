@@ -21,4 +21,6 @@ CHANGE ME LATER YOU LAZY BUM
 
 This project is licensed under the [GNU Affero General Public License](https://www.gnu.org/licenses/agpl-3.0.en.html). [Know your rights](https://choosealicense.com/licenses/agpl-3.0/).
 
+To enable pmtud, use `--pmtud`
+
 There is a `--insecure` flag you can use at runtime (eg. `sudo ./secure-dns-proxy --insecure`) that will disable TLS certificate verification. You should NEVER need to use this unless you are testing something, in which you should know very well what you are about to do.

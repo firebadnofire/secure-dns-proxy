@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"flag"
 	"io"
 	"log"
@@ -13,16 +15,18 @@ import (
 	"strings"
 
 	"github.com/miekg/dns"
+	"github.com/quic-go/quic-go"
 )
 
 const (
-	listenAddr = "127.0.0.35:53"
+	listenAddr               = "127.0.0.35:53"
 	relativeUpstreamConfPath = "../etc/secure-dns-proxy/upstreams.conf"
 )
 
 var (
-	upstreams []string
-	insecure  bool
+	upstreams    []string
+	insecure     bool
+	enablePMTUD  bool
 )
 
 func getExecutableDir() string {
@@ -48,7 +52,7 @@ func loadUpstreams(relPath string) []string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, "dns://") || strings.HasPrefix(line, "https://") || strings.HasPrefix(line, "tls://") {
+		if strings.HasPrefix(line, "dns://") || strings.HasPrefix(line, "https://") || strings.HasPrefix(line, "tls://") || strings.HasPrefix(line, "quic://") {
 			result = append(result, line)
 		} else {
 			log.Printf("[WARN] Skipping unsupported line: %s", line)
@@ -101,6 +105,7 @@ func forwardDNSOverTLS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	tlsConfig := &tls.Config{
 		ServerName:         strings.Split(host, ":")[0],
 		InsecureSkipVerify: insecure,
+		NextProtos:         []string{"tls"},
 	}
 	conn, err := tls.Dial("tcp", host, tlsConfig)
 	if err != nil {
@@ -115,6 +120,71 @@ func forwardDNSOverTLS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	return dnsConn.ReadMsg()
 }
 
+func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
+	hostPort := strings.TrimPrefix(upstream, "quic://")
+	if !strings.Contains(hostPort, ":") {
+		hostPort += ":853"
+	}
+
+	tlsConfig := &tls.Config{
+		ServerName:         strings.Split(hostPort, ":")[0],
+		InsecureSkipVerify: insecure,
+		NextProtos:         []string{"doq"},
+	}
+	quicConf := &quic.Config{DisablePathMTUDiscovery: !enablePMTUD}
+
+	session, err := quic.DialAddr(context.Background(), hostPort, tlsConfig, quicConf)
+	if err != nil {
+		return nil, err
+	}
+	defer session.CloseWithError(0, "")
+
+	// Open a QUIC stream (no args)
+	stream, err := session.OpenStream()
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare DNS query
+	raw, err := msg.Pack()
+	if err != nil {
+		stream.Close()
+		return nil, err
+	}
+
+	// Write length-prefixed query
+	length := uint16(len(raw))
+	lenBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(lenBuf, length)
+	if _, err := stream.Write(lenBuf); err != nil {
+		stream.Close()
+		return nil, err
+	}
+	if _, err := stream.Write(raw); err != nil {
+		stream.Close()
+		return nil, err
+	}
+
+	// Signal FIN
+	stream.Close()
+
+	// Read full response
+	respBytes, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, err
+	}
+	if len(respBytes) < 2 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	body := respBytes[2:]
+
+	response := new(dns.Msg)
+	if err := response.Unpack(body); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	if len(upstreams) == 0 {
 		log.Print("[ERROR] No DNS upstreams available")
@@ -125,17 +195,20 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	var resp *dns.Msg
 	var err error
 
-	upstream := upstreams[0] // Basic fallback for now
-	if strings.HasPrefix(upstream, "dns://") {
+	upstream := upstreams[0]
+	switch {
+	case strings.HasPrefix(upstream, "dns://"):
 		c := new(dns.Client)
 		address := strings.TrimPrefix(upstream, "dns://")
 		resp, _, err = c.Exchange(r, address)
-	} else if strings.HasPrefix(upstream, "https://") {
+	case strings.HasPrefix(upstream, "https://"):
 		resp, err = forwardDNSOverHTTPS(upstream, r)
-	} else if strings.HasPrefix(upstream, "tls://") {
+	case strings.HasPrefix(upstream, "tls://"):
 		resp, err = forwardDNSOverTLS(upstream, r)
-	} else {
-		err = io.ErrUnexpectedEOF // crude placeholder
+	case strings.HasPrefix(upstream, "quic://"):
+		resp, err = forwardDNSOverQUIC(upstream, r)
+	default:
+		err = io.ErrUnexpectedEOF
 	}
 
 	if err != nil {
@@ -151,6 +224,7 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 func main() {
 	flag.BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification")
+	flag.BoolVar(&enablePMTUD, "pmtud", true, /* default on */ "Enable QUIC Path MTU Discovery")
 	flag.Parse()
 
 	upstreams = loadUpstreams(relativeUpstreamConfPath)

@@ -10,7 +10,6 @@
 *.dylib
 bin
 etc
-
 # Test binary, built with `go test -c`
 *.test
 
