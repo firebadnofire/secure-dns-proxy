@@ -4,10 +4,10 @@
 
 `upstreams-example.conf` conf to copy to etc/upstreams.conf with changes
 
-[x] Standard DNS support
-[x] DNS over HTTPS (DoH) support 
-[x] DNS over TLS (DoT) support
-[x] DNS over QUIC (DoQ) support
+- [x] Standard DNS support
+- [x] DNS over HTTPS (DoH) support 
+- [x] DNS over TLS (DoT) support
+- [x] DNS over QUIC (DoQ) support
 
 Build instructions:
 
