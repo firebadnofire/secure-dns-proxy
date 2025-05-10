@@ -1,15 +1,21 @@
 # secure-dns-proxy
 
-`secure-dns-proxy` binary that proxies DNS
+`secure-dns-proxy` proxies DNS queries
 
-`upstreams-example.conf` conf to copy to etc/upstreams.conf with changes
+## Why?
+
+A lot of systems don't natively support DNS over HTTPS, DNS over TLS, and especially DNS over QUIC. This project aims to provide support for these transport layers without heavy system modifications. 
+
+## How?
+
+DoH, DoT, and DoQ are all layer that go over unencrypted DNS, so all you really need to do is safely deliver them and unwrap them, so that's exactly what this does. Your computer makes a query to `127.0.0.35:53` and `secure-dns-proxy` will reach out to an upstream in `etc/upstreams.conf`, say `tls://doh.archuser.org`. The DoT host will reply in DoT, but when it reaches the system it is unwrapped into standard DNS. Since it is bound to `127.0.0.35`, no unencrypted data leaves the system. 
 
 - [x] Standard DNS support
 - [x] DNS over HTTPS (DoH) support 
 - [x] DNS over TLS (DoT) support
 - [x] DNS over QUIC (DoQ) support
 
-Build instructions:
+## Build instructions
 
 ```
 git clone https://codeberg.org/firebadnofire/secure-dns-proxy
@@ -24,5 +30,9 @@ The compiled build will be put in `dist/` as a `tar.gz` containing a portable bu
 This project is licensed under the [GNU Affero General Public License](https://www.gnu.org/licenses/agpl-3.0.en.html). [Know your rights](https://choosealicense.com/licenses/agpl-3.0/).
 
 To enable pmtud, use `--pmtud`
+
+To switch the bind address, use `--bind` (eg. `--bind 127.0.0.53`)
+
+To switch the bind port, use `--port` (eg. `--port 54`)
 
 There is a `--insecure` flag you can use at runtime (eg. `sudo ./secure-dns-proxy --insecure`) that will disable TLS certificate verification. You should NEVER need to use this unless you are testing something, in which you should know very well what you are about to do.

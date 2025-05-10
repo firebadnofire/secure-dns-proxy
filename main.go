@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/miekg/dns"
@@ -19,7 +20,6 @@ import (
 )
 
 const (
-	listenAddr               = "127.0.0.35:53"
 	relativeUpstreamConfPath = "../etc/secure-dns-proxy/upstreams.conf"
 )
 
@@ -27,6 +27,8 @@ var (
 	upstreams    []string
 	insecure     bool
 	enablePMTUD  bool
+	port         int
+	bind         string
 )
 
 func getExecutableDir() string {
@@ -139,20 +141,17 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	}
 	defer session.CloseWithError(0, "")
 
-	// Open a QUIC stream (no args)
 	stream, err := session.OpenStream()
 	if err != nil {
 		return nil, err
 	}
 
-	// Prepare DNS query
 	raw, err := msg.Pack()
 	if err != nil {
 		stream.Close()
 		return nil, err
 	}
 
-	// Write length-prefixed query
 	length := uint16(len(raw))
 	lenBuf := make([]byte, 2)
 	binary.BigEndian.PutUint16(lenBuf, length)
@@ -164,11 +163,8 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 		stream.Close()
 		return nil, err
 	}
-
-	// Signal FIN
 	stream.Close()
 
-	// Read full response
 	respBytes, err := io.ReadAll(stream)
 	if err != nil {
 		return nil, err
@@ -224,23 +220,27 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 func main() {
 	flag.BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification")
-	flag.BoolVar(&enablePMTUD, "pmtud", true, /* default on */ "Enable QUIC Path MTU Discovery")
+	flag.BoolVar(&enablePMTUD, "pmtud", true, "Enable QUIC Path MTU Discovery")
+	flag.IntVar(&port, "port", 53, "Port to bind on localhost")
+	flag.StringVar(&bind, "bind", "127.0.0.35", "Address to bind DNS server to")
 	flag.Parse()
+
+	addr := bind + ":" + strconv.Itoa(port)
 
 	upstreams = loadUpstreams(relativeUpstreamConfPath)
 	dns.HandleFunc(".", handleDNSRequest)
 
-	udpServer := &dns.Server{Addr: listenAddr, Net: "udp"}
-	tcpServer := &dns.Server{Addr: listenAddr, Net: "tcp"}
+	udpServer := &dns.Server{Addr: addr, Net: "udp"}
+	tcpServer := &dns.Server{Addr: addr, Net: "tcp"}
 
 	go func() {
-		log.Printf("[INFO] Starting UDP server on %s", listenAddr)
+		log.Printf("[INFO] Starting UDP server on %s", addr)
 		if err := udpServer.ListenAndServe(); err != nil {
 			log.Fatalf("[FATAL] Failed to start UDP server: %v", err)
 		}
 	}()
 
-	log.Printf("[INFO] Starting TCP server on %s", listenAddr)
+	log.Printf("[INFO] Starting TCP server on %s", addr)
 	if err := tcpServer.ListenAndServe(); err != nil {
 		log.Fatalf("[FATAL] Failed to start TCP server: %v", err)
 	}
