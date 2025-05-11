@@ -21,6 +21,7 @@ import (
 
 const (
 	relativeUpstreamConfPath = "../etc/secure-dns-proxy/upstreams.conf"
+	homeFallbackUpstreamConfPath = "~/.config/secure-dns-proxy/upstreams.conf"
 	systemFallbackUpstreamConfPath = "/etc/secure-dns-proxy/upstreams.conf"
 )
 
@@ -40,16 +41,36 @@ func getExecutableDir() string {
 	return filepath.Dir(exePath)
 }
 
-func loadUpstreams(relPath string) []string {
-	absPath := filepath.Join(getExecutableDir(), relPath)
-	file, err := os.Open(absPath)
-	if err != nil {
-		log.Printf("[WARN] Failed to open local upstream config at %s: %v", absPath, err)
-		log.Printf("[INFO] Falling back to system config at %s", systemFallbackUpstreamConfPath)
-		file, err = os.Open(systemFallbackUpstreamConfPath)
+func expandUser(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Fatalf("[FATAL] Failed to open fallback upstream config: %v", err)
+			log.Fatalf("[FATAL] Cannot determine home directory: %v", err)
 		}
+		return filepath.Join(home, path[1:])
+	}
+	return path
+}
+
+func loadUpstreams(relPath string) []string {
+	paths := []string{
+		filepath.Join(getExecutableDir(), relPath),
+		expandUser(homeFallbackUpstreamConfPath),
+		systemFallbackUpstreamConfPath,
+	}
+
+	var file *os.File
+	var err error
+	for _, absPath := range paths {
+		file, err = os.Open(absPath)
+		if err == nil {
+			log.Printf("[INFO] Loaded upstream config from %s", absPath)
+			break
+		}
+		log.Printf("[WARN] Failed to open upstream config at %s: %v", absPath, err)
+	}
+	if file == nil {
+		log.Fatalf("[FATAL] All attempts to load upstream config failed")
 	}
 	defer file.Close()
 
