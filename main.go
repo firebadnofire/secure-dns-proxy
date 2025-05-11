@@ -20,17 +20,17 @@ import (
 )
 
 const (
-	relativeUpstreamConfPath = "../etc/secure-dns-proxy/upstreams.conf"
+	relativeUpstreamConfPath     = "../etc/secure-dns-proxy/upstreams.conf"
 	homeFallbackUpstreamConfPath = "~/.config/secure-dns-proxy/upstreams.conf"
 	systemFallbackUpstreamConfPath = "/etc/secure-dns-proxy/upstreams.conf"
 )
 
 var (
-	upstreams    []string
-	insecure     bool
-	enablePMTUD  bool
-	port         int
-	bind         string
+	upstreams   []string
+	insecure    bool
+	enablePMTUD bool
+	port        int
+	bind        string
 )
 
 func getExecutableDir() string {
@@ -217,28 +217,36 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	var resp *dns.Msg
 	var err error
-
-	upstream := upstreams[0]
-	switch {
-	case strings.HasPrefix(upstream, "dns://"):
-		c := new(dns.Client)
-		address := strings.TrimPrefix(upstream, "dns://")
-		if !strings.Contains(address, ":") {
-			address += ":53"
+	for _, upstream := range upstreams {
+		switch {
+		case strings.HasPrefix(upstream, "dns://"):
+			c := new(dns.Client)
+			address := strings.TrimPrefix(upstream, "dns://")
+			if !strings.Contains(address, ":") {
+				address += ":53"
+			}
+			resp, _, err = c.Exchange(r, address)
+		case strings.HasPrefix(upstream, "https://"):
+			resp, err = forwardDNSOverHTTPS(upstream, r)
+		case strings.HasPrefix(upstream, "tls://"):
+			resp, err = forwardDNSOverTLS(upstream, r)
+		case strings.HasPrefix(upstream, "quic://"):
+			resp, err = forwardDNSOverQUIC(upstream, r)
+		default:
+			err = io.ErrUnexpectedEOF
 		}
-		resp, _, err = c.Exchange(r, address)
-	case strings.HasPrefix(upstream, "https://"):
-		resp, err = forwardDNSOverHTTPS(upstream, r)
-	case strings.HasPrefix(upstream, "tls://"):
-		resp, err = forwardDNSOverTLS(upstream, r)
-	case strings.HasPrefix(upstream, "quic://"):
-		resp, err = forwardDNSOverQUIC(upstream, r)
-	default:
-		err = io.ErrUnexpectedEOF
+
+		if err != nil || resp == nil || len(resp.Answer) == 0 {
+			log.Printf("[WARN] Upstream %s failed: %v", upstream, err)
+			continue
+		} else {
+			log.Printf("[INFO] Successfully resolved via upstream: %s", upstream)
+			break
+		}
 	}
 
-	if err != nil {
-		log.Printf("[ERROR] DNS forward failed: %v", err)
+	if resp == nil || len(resp.Answer) == 0 {
+		log.Printf("[ERROR] All upstreams failed or returned no answer")
 		dns.HandleFailed(w, r)
 		return
 	}
