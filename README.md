@@ -25,6 +25,10 @@ make
 
 The compiled build will be put in `dist/` as a `tar.gz` containing a portable build. You may run `sudo tar --strip-components=1 -C / -xaf file.tar.gz` to install it to your system
 
+OR
+
+`go install archuser.org/secure-dns-proxy@latest`
+
 # Notes
 
 This project is licensed under the [GNU Affero General Public License](https://www.gnu.org/licenses/agpl-3.0.en.html). [What is this]?(https://choosealicense.com/licenses/agpl-3.0/).
@@ -34,5 +38,7 @@ To enable pmtud, use `--pmtud`
 To switch the bind address, use `--bind` (eg. `--bind 127.0.0.53`)
 
 To switch the bind port, use `--port` (eg. `--port 54`)
+
+`/etc/secure-dns-proxy/upstreams.conf` as well as `~/.config/secure-dns-proxy/upstreams.conf` are also valid conf locations.
 
 There is a `--insecure` flag you can use at runtime (eg. `sudo ./secure-dns-proxy --insecure`) that will disable TLS certificate verification. You should NEVER need to use this unless you are testing something, in which you should know very well what you are about to do.
