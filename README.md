@@ -23,8 +23,7 @@ cd secure-dns-proxy
 make
 ```
 
-The compiled build will be put in `dist/` as a `tar.gz` containing a portable build. You may run `sudo tar --strip-components=1 -C / -xaf file.tar.gz` to install it to your system
-
+The compiled build will be put in `dist/` as a `tar.gz` containing a portable build. You can extract this and move it's contents into your system.
 OR
 
 `go install archuser.org/secure-dns-proxy@latest`
