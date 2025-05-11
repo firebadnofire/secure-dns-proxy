@@ -30,7 +30,7 @@ OR
 
 # Notes
 
-This project is licensed under the [GNU Affero General Public License](https://www.gnu.org/licenses/agpl-3.0.en.html). [What is this]?(https://choosealicense.com/licenses/agpl-3.0/).
+This project is licensed under the [GNU Affero General Public License](https://www.gnu.org/licenses/agpl-3.0.en.html). [What is this](https://choosealicense.com/licenses/agpl-3.0/)?
 
 To enable pmtud, use `--pmtud`
 
