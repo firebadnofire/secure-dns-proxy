@@ -12,26 +12,46 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/quic-go/quic-go"
 )
 
 const (
-	relativeUpstreamConfPath     = "../etc/secure-dns-proxy/upstreams.conf"
-	homeFallbackUpstreamConfPath = "~/.config/secure-dns-proxy/upstreams.conf"
+	relativeUpstreamConfPath       = "../etc/secure-dns-proxy/upstreams.conf"
+	homeFallbackUpstreamConfPath   = "~/.config/secure-dns-proxy/upstreams.conf"
 	systemFallbackUpstreamConfPath = "/etc/secure-dns-proxy/upstreams.conf"
+	consecutiveFailureThreshold    = 3
+	initialBackoff                 = time.Second
+	maxBackoff                     = 30 * time.Second
 )
 
 var (
-	upstreams   []string
+	upstreams   []*Upstream
 	insecure    bool
 	enablePMTUD bool
 	port        int
 	bind        string
+	rotate      bool
+
+	upstreamMu sync.Mutex
 )
+
+type Upstream struct {
+	URL                 string
+	successCount        int
+	failureCount        int
+	consecutiveFailures int
+	lastErrorTime       time.Time
+	penaltyUntil        time.Time
+	backoff             time.Duration
+	lastLatency         time.Duration
+}
 
 func getExecutableDir() string {
 	exePath, err := os.Executable()
@@ -52,7 +72,7 @@ func expandUser(path string) string {
 	return path
 }
 
-func loadUpstreams(relPath string) []string {
+func loadUpstreams(relPath string) []*Upstream {
 	paths := []string{
 		filepath.Join(getExecutableDir(), relPath),
 		expandUser(homeFallbackUpstreamConfPath),
@@ -75,14 +95,14 @@ func loadUpstreams(relPath string) []string {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	var result []string
+	var result []*Upstream
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		if strings.HasPrefix(line, "dns://") || strings.HasPrefix(line, "https://") || strings.HasPrefix(line, "tls://") || strings.HasPrefix(line, "quic://") {
-			result = append(result, line)
+			result = append(result, &Upstream{URL: line, backoff: initialBackoff})
 		} else {
 			log.Printf("[WARN] Skipping unsupported line: %s", line)
 		}
@@ -208,6 +228,63 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	return response, nil
 }
 
+func getSortedUpstreams() []*Upstream {
+	upstreamMu.Lock()
+	defer upstreamMu.Unlock()
+
+	ordered := make([]*Upstream, len(upstreams))
+	copy(ordered, upstreams)
+
+	if rotate {
+		now := time.Now()
+		sort.SliceStable(ordered, func(i, j int) bool {
+			iScore := upstreamScore(ordered[i], now)
+			jScore := upstreamScore(ordered[j], now)
+			return iScore < jScore
+		})
+	}
+
+	return ordered
+}
+
+func upstreamScore(u *Upstream, now time.Time) float64 {
+	latency := u.lastLatency
+	if latency == 0 {
+		latency = 500 * time.Millisecond
+	}
+	health := float64(u.successCount+1) / float64(u.failureCount+1)
+	penalty := 1.0
+	if now.Before(u.penaltyUntil) {
+		penalty = 10.0
+	}
+	return float64(latency) * penalty / health
+}
+
+func markUpstreamFailure(u *Upstream, err error) {
+	u.failureCount++
+	u.consecutiveFailures++
+	u.lastErrorTime = time.Now()
+
+	if u.consecutiveFailures >= consecutiveFailureThreshold {
+		u.penaltyUntil = time.Now().Add(u.backoff)
+		if u.backoff < maxBackoff {
+			nextBackoff := u.backoff * 2
+			if nextBackoff > maxBackoff {
+				nextBackoff = maxBackoff
+			}
+			u.backoff = nextBackoff
+		}
+		log.Printf("[WARN] Penalizing upstream %s for %s due to consecutive failures: %v", u.URL, u.penaltyUntil.Sub(time.Now()), err)
+	}
+}
+
+func markUpstreamSuccess(u *Upstream) {
+	u.successCount++
+	u.consecutiveFailures = 0
+	u.penaltyUntil = time.Time{}
+	u.backoff = initialBackoff
+}
+
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	if len(upstreams) == 0 {
 		log.Print("[ERROR] No DNS upstreams available")
@@ -217,32 +294,47 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	var resp *dns.Msg
 	var err error
-	for _, upstream := range upstreams {
+	for _, upstream := range getSortedUpstreams() {
+		upstreamMu.Lock()
+		if time.Now().Before(upstream.penaltyUntil) {
+			log.Printf("[INFO] Skipping penalized upstream %s until %s", upstream.URL, upstream.penaltyUntil.Format(time.RFC3339))
+			upstreamMu.Unlock()
+			continue
+		}
+		upstreamMu.Unlock()
+
+		start := time.Now()
 		switch {
-		case strings.HasPrefix(upstream, "dns://"):
+		case strings.HasPrefix(upstream.URL, "dns://"):
 			c := new(dns.Client)
-			address := strings.TrimPrefix(upstream, "dns://")
+			address := strings.TrimPrefix(upstream.URL, "dns://")
 			if !strings.Contains(address, ":") {
 				address += ":53"
 			}
 			resp, _, err = c.Exchange(r, address)
-		case strings.HasPrefix(upstream, "https://"):
-			resp, err = forwardDNSOverHTTPS(upstream, r)
-		case strings.HasPrefix(upstream, "tls://"):
-			resp, err = forwardDNSOverTLS(upstream, r)
-		case strings.HasPrefix(upstream, "quic://"):
-			resp, err = forwardDNSOverQUIC(upstream, r)
+		case strings.HasPrefix(upstream.URL, "https://"):
+			resp, err = forwardDNSOverHTTPS(upstream.URL, r)
+		case strings.HasPrefix(upstream.URL, "tls://"):
+			resp, err = forwardDNSOverTLS(upstream.URL, r)
+		case strings.HasPrefix(upstream.URL, "quic://"):
+			resp, err = forwardDNSOverQUIC(upstream.URL, r)
 		default:
 			err = io.ErrUnexpectedEOF
 		}
+		latency := time.Since(start)
 
+		upstreamMu.Lock()
+		upstream.lastLatency = latency
 		if err != nil || resp == nil || len(resp.Answer) == 0 {
-			log.Printf("[WARN] Upstream %s failed: %v", upstream, err)
+			markUpstreamFailure(upstream, err)
+			upstreamMu.Unlock()
+			log.Printf("[WARN] Upstream %s failed: %v", upstream.URL, err)
 			continue
-		} else {
-			log.Printf("[INFO] Successfully resolved via upstream: %s", upstream)
-			break
 		}
+		markUpstreamSuccess(upstream)
+		upstreamMu.Unlock()
+		log.Printf("[INFO] Successfully resolved via upstream: %s (latency: %s)", upstream.URL, latency)
+		break
 	}
 
 	if resp == nil || len(resp.Answer) == 0 {
@@ -261,6 +353,7 @@ func main() {
 	flag.BoolVar(&enablePMTUD, "pmtud", true, "Enable QUIC Path MTU Discovery")
 	flag.IntVar(&port, "port", 53, "Port to bind on localhost")
 	flag.StringVar(&bind, "bind", "127.0.0.35", "Address to bind DNS server to")
+	flag.BoolVar(&rotate, "rotate-upstreams", false, "Rotate upstream order based on recent health")
 	flag.Parse()
 
 	addr := bind + ":" + strconv.Itoa(port)
