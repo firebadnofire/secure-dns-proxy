@@ -7,31 +7,153 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/quic-go/quic-go"
 )
 
 const (
-	relativeUpstreamConfPath     = "../etc/secure-dns-proxy/upstreams.conf"
-	homeFallbackUpstreamConfPath = "~/.config/secure-dns-proxy/upstreams.conf"
+	relativeUpstreamConfPath       = "../etc/secure-dns-proxy/upstreams.conf"
+	homeFallbackUpstreamConfPath   = "~/.config/secure-dns-proxy/upstreams.conf"
 	systemFallbackUpstreamConfPath = "/etc/secure-dns-proxy/upstreams.conf"
 )
 
 var (
-	upstreams   []string
-	insecure    bool
-	enablePMTUD bool
-	port        int
-	bind        string
+	upstreams       []string
+	insecure        bool
+	enablePMTUD     bool
+	port            int
+	bind            string
+	upstreamTimeout time.Duration
 )
+
+const (
+	maxTLSPoolSize   = 4
+	maxQUICPoolSize  = 4
+	defaultTLSNext   = "tls"
+	defaultQUICProto = "doq"
+)
+
+type tlsPool struct {
+	mu    sync.Mutex
+	conns map[string][]*tls.Conn
+}
+
+func newTLSPool() *tlsPool {
+	return &tlsPool{conns: make(map[string][]*tls.Conn)}
+}
+
+func (p *tlsPool) get(host string) *tls.Conn {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	conns := p.conns[host]
+	for len(conns) > 0 {
+		conn := conns[len(conns)-1]
+		conns = conns[:len(conns)-1]
+		if isTLSConnUsable(conn) {
+			p.conns[host] = conns
+			return conn
+		}
+		conn.Close()
+	}
+	p.conns[host] = conns
+	return nil
+}
+
+func (p *tlsPool) put(host string, conn *tls.Conn) {
+	if conn == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	conns := p.conns[host]
+	if len(conns) >= maxTLSPoolSize {
+		conn.Close()
+		return
+	}
+	p.conns[host] = append(conns, conn)
+}
+
+type quicPool struct {
+	mu       sync.Mutex
+	sessions map[string][]quic.Connection
+}
+
+func newQUICPool() *quicPool {
+	return &quicPool{sessions: make(map[string][]quic.Connection)}
+}
+
+func (p *quicPool) get(host string) quic.Connection {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sessions := p.sessions[host]
+	for len(sessions) > 0 {
+		s := sessions[len(sessions)-1]
+		sessions = sessions[:len(sessions)-1]
+		if s.Context().Err() == nil {
+			p.sessions[host] = sessions
+			return s
+		}
+		s.CloseWithError(0, "dropping closed session")
+	}
+	p.sessions[host] = sessions
+	return nil
+}
+
+func (p *quicPool) put(host string, session quic.Connection) {
+	if session == nil {
+		return
+	}
+	if session.Context().Err() != nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sessions := p.sessions[host]
+	if len(sessions) >= maxQUICPoolSize {
+		session.CloseWithError(0, "closing idle session: pool full")
+		return
+	}
+	p.sessions[host] = append(sessions, session)
+}
+
+var (
+	tlsConnPool  = newTLSPool()
+	quicSessPool = newQUICPool()
+)
+
+func isTLSConnUsable(conn *tls.Conn) bool {
+	if conn == nil {
+		return false
+	}
+
+	if err := conn.SetReadDeadline(time.Now()); err != nil {
+		return false
+	}
+	defer conn.SetReadDeadline(time.Time{})
+
+	_, err := conn.Read(make([]byte, 0))
+	if err == nil {
+		return true
+	}
+
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return true
+	}
+
+	return false
+}
 
 func getExecutableDir() string {
 	exePath, err := os.Executable()
@@ -93,20 +215,25 @@ func loadUpstreams(relPath string) []string {
 	return result
 }
 
-func forwardDNSOverHTTPS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
+func watchContext(ctx context.Context, onCancel func()) func() {
+	stop := context.AfterFunc(ctx, onCancel)
+	return func() { stop() }
+}
+
+func forwardDNSOverHTTPS(ctx context.Context, upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	raw, err := msg.Pack()
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", upstream, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, "POST", upstream, bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("Accept", "application/dns-message")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: upstreamTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -125,7 +252,7 @@ func forwardDNSOverHTTPS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	return response, nil
 }
 
-func forwardDNSOverTLS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
+func forwardDNSOverTLS(ctx context.Context, upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	host := strings.TrimPrefix(upstream, "tls://")
 	if !strings.Contains(host, ":") {
 		host += ":853"
@@ -134,22 +261,58 @@ func forwardDNSOverTLS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	tlsConfig := &tls.Config{
 		ServerName:         strings.Split(host, ":")[0],
 		InsecureSkipVerify: insecure,
-		NextProtos:         []string{"tls"},
+		NextProtos:         []string{defaultTLSNext},
 	}
-	conn, err := tls.Dial("tcp", host, tlsConfig)
-	if err != nil {
-		return nil, err
+
+	conn := tlsConnPool.get(host)
+	if conn == nil {
+		dialer := &tls.Dialer{
+			Config: tlsConfig,
+			NetDialer: &net.Dialer{
+				Timeout:   upstreamTimeout,
+				KeepAlive: 30 * time.Second,
+			},
+		}
+		var err error
+		netConn, err := dialer.DialContext(ctx, "tcp", host)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		conn, ok = netConn.(*tls.Conn)
+		if !ok {
+			netConn.Close()
+			return nil, fmt.Errorf("unexpected TLS connection type %T", netConn)
+		}
 	}
-	defer conn.Close()
+
+	stopWatcher := watchContext(ctx, func() { conn.Close() })
+	defer stopWatcher()
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(deadline)
+	}
 
 	dnsConn := &dns.Conn{Conn: conn}
 	if err := dnsConn.WriteMsg(msg); err != nil {
+		conn.Close()
 		return nil, err
 	}
-	return dnsConn.ReadMsg()
+	resp, err := dnsConn.ReadMsg()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	if ctx.Err() != nil {
+		conn.Close()
+		return nil, ctx.Err()
+	}
+	conn.SetDeadline(time.Time{})
+	tlsConnPool.put(host, conn)
+	return resp, nil
 }
 
-func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
+func forwardDNSOverQUIC(ctx context.Context, upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	hostPort := strings.TrimPrefix(upstream, "quic://")
 	if !strings.Contains(hostPort, ":") {
 		hostPort += ":853"
@@ -158,19 +321,34 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	tlsConfig := &tls.Config{
 		ServerName:         strings.Split(hostPort, ":")[0],
 		InsecureSkipVerify: insecure,
-		NextProtos:         []string{"doq"},
+		NextProtos:         []string{defaultQUICProto},
 	}
-	quicConf := &quic.Config{DisablePathMTUDiscovery: !enablePMTUD}
+	quicConf := &quic.Config{DisablePathMTUDiscovery: !enablePMTUD, KeepAlivePeriod: 30 * time.Second}
 
-	session, err := quic.DialAddr(context.Background(), hostPort, tlsConfig, quicConf)
+	session := quicSessPool.get(hostPort)
+	if session == nil {
+		var err error
+		session, err = quic.DialAddr(ctx, hostPort, tlsConfig, quicConf)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	cleanup := true
+	stopWatcher := watchContext(ctx, func() { session.CloseWithError(0, "context cancelled") })
+	defer func() {
+		stopWatcher()
+		if cleanup {
+			session.CloseWithError(0, "closing failed session")
+		}
+	}()
+
+	stream, err := session.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer session.CloseWithError(0, "")
-
-	stream, err := session.OpenStream()
-	if err != nil {
-		return nil, err
+	if deadline, ok := ctx.Deadline(); ok {
+		stream.SetDeadline(deadline)
 	}
 
 	raw, err := msg.Pack()
@@ -183,28 +361,40 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	lenBuf := make([]byte, 2)
 	binary.BigEndian.PutUint16(lenBuf, length)
 	if _, err := stream.Write(lenBuf); err != nil {
-		stream.Close()
+		stream.CancelWrite(0)
 		return nil, err
 	}
 	if _, err := stream.Write(raw); err != nil {
-		stream.Close()
+		stream.CancelWrite(0)
 		return nil, err
 	}
-	stream.Close()
+	if err := stream.Close(); err != nil {
+		return nil, err
+	}
 
-	respBytes, err := io.ReadAll(stream)
-	if err != nil {
+	respBytes := make([]byte, 2)
+	if _, err := io.ReadFull(stream, respBytes); err != nil {
 		return nil, err
 	}
-	if len(respBytes) < 2 {
-		return nil, io.ErrUnexpectedEOF
+	respLength := int(binary.BigEndian.Uint16(respBytes))
+	body := make([]byte, respLength)
+	if _, err := io.ReadFull(stream, body); err != nil {
+		return nil, err
 	}
-	body := respBytes[2:]
 
 	response := new(dns.Msg)
 	if err := response.Unpack(body); err != nil {
+		session.CloseWithError(0, "invalid response")
 		return nil, err
 	}
+
+	if ctx.Err() != nil || session.Context().Err() != nil {
+		session.CloseWithError(0, "context expired")
+		return nil, ctx.Err()
+	}
+	stream.SetDeadline(time.Time{})
+	quicSessPool.put(hostPort, session)
+	cleanup = false
 	return response, nil
 }
 
@@ -218,6 +408,7 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	var resp *dns.Msg
 	var err error
 	for _, upstream := range upstreams {
+		ctx, cancel := context.WithTimeout(context.Background(), upstreamTimeout)
 		switch {
 		case strings.HasPrefix(upstream, "dns://"):
 			c := new(dns.Client)
@@ -225,16 +416,17 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 			if !strings.Contains(address, ":") {
 				address += ":53"
 			}
-			resp, _, err = c.Exchange(r, address)
+			resp, _, err = c.ExchangeContext(ctx, r, address)
 		case strings.HasPrefix(upstream, "https://"):
-			resp, err = forwardDNSOverHTTPS(upstream, r)
+			resp, err = forwardDNSOverHTTPS(ctx, upstream, r)
 		case strings.HasPrefix(upstream, "tls://"):
-			resp, err = forwardDNSOverTLS(upstream, r)
+			resp, err = forwardDNSOverTLS(ctx, upstream, r)
 		case strings.HasPrefix(upstream, "quic://"):
-			resp, err = forwardDNSOverQUIC(upstream, r)
+			resp, err = forwardDNSOverQUIC(ctx, upstream, r)
 		default:
 			err = io.ErrUnexpectedEOF
 		}
+		cancel()
 
 		if err != nil || resp == nil || len(resp.Answer) == 0 {
 			log.Printf("[WARN] Upstream %s failed: %v", upstream, err)
@@ -261,7 +453,12 @@ func main() {
 	flag.BoolVar(&enablePMTUD, "pmtud", true, "Enable QUIC Path MTU Discovery")
 	flag.IntVar(&port, "port", 53, "Port to bind on localhost")
 	flag.StringVar(&bind, "bind", "127.0.0.35", "Address to bind DNS server to")
+	flag.DurationVar(&upstreamTimeout, "upstream-timeout", 5*time.Second, "Timeout for upstream requests")
 	flag.Parse()
+
+	if upstreamTimeout <= 0 {
+		upstreamTimeout = 5 * time.Second
+	}
 
 	addr := bind + ":" + strconv.Itoa(port)
 
