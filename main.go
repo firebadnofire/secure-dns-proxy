@@ -58,12 +58,17 @@ func (p *tlsPool) get(host string) *tls.Conn {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	conns := p.conns[host]
-	if len(conns) == 0 {
-		return nil
+	for len(conns) > 0 {
+		conn := conns[len(conns)-1]
+		conns = conns[:len(conns)-1]
+		if isTLSConnUsable(conn) {
+			p.conns[host] = conns
+			return conn
+		}
+		conn.Close()
 	}
-	conn := conns[len(conns)-1]
-	p.conns[host] = conns[:len(conns)-1]
-	return conn
+	p.conns[host] = conns
+	return nil
 }
 
 func (p *tlsPool) put(host string, conn *tls.Conn) {
@@ -93,12 +98,17 @@ func (p *quicPool) get(host string) quic.Connection {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	sessions := p.sessions[host]
-	if len(sessions) == 0 {
-		return nil
+	for len(sessions) > 0 {
+		s := sessions[len(sessions)-1]
+		sessions = sessions[:len(sessions)-1]
+		if s.Context().Err() == nil {
+			p.sessions[host] = sessions
+			return s
+		}
+		s.CloseWithError(0, "dropping closed session")
 	}
-	s := sessions[len(sessions)-1]
-	p.sessions[host] = sessions[:len(sessions)-1]
-	return s
+	p.sessions[host] = sessions
+	return nil
 }
 
 func (p *quicPool) put(host string, session quic.Connection) {
@@ -122,6 +132,28 @@ var (
 	tlsConnPool  = newTLSPool()
 	quicSessPool = newQUICPool()
 )
+
+func isTLSConnUsable(conn *tls.Conn) bool {
+	if conn == nil {
+		return false
+	}
+
+	if err := conn.SetReadDeadline(time.Now()); err != nil {
+		return false
+	}
+	defer conn.SetReadDeadline(time.Time{})
+
+	_, err := conn.Read(make([]byte, 0))
+	if err == nil {
+		return true
+	}
+
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return true
+	}
+
+	return false
+}
 
 func getExecutableDir() string {
 	exePath, err := os.Executable()
@@ -184,15 +216,8 @@ func loadUpstreams(relPath string) []string {
 }
 
 func watchContext(ctx context.Context, onCancel func()) func() {
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			onCancel()
-		case <-done:
-		}
-	}()
-	return func() { close(done) }
+	stop := context.AfterFunc(ctx, onCancel)
+	return func() { stop() }
 }
 
 func forwardDNSOverHTTPS(ctx context.Context, upstream string, msg *dns.Msg) (*dns.Msg, error) {
@@ -309,14 +334,17 @@ func forwardDNSOverQUIC(ctx context.Context, upstream string, msg *dns.Msg) (*dn
 		}
 	}
 
+	cleanup := true
 	stopWatcher := watchContext(ctx, func() { session.CloseWithError(0, "context cancelled") })
-	defer stopWatcher()
+	defer func() {
+		stopWatcher()
+		if cleanup {
+			session.CloseWithError(0, "closing failed session")
+		}
+	}()
 
 	stream, err := session.OpenStreamSync(ctx)
 	if err != nil {
-		if ctx.Err() != nil {
-			session.CloseWithError(0, "context cancelled")
-		}
 		return nil, err
 	}
 	if deadline, ok := ctx.Deadline(); ok {
@@ -333,23 +361,26 @@ func forwardDNSOverQUIC(ctx context.Context, upstream string, msg *dns.Msg) (*dn
 	lenBuf := make([]byte, 2)
 	binary.BigEndian.PutUint16(lenBuf, length)
 	if _, err := stream.Write(lenBuf); err != nil {
-		stream.Close()
+		stream.CancelWrite(0)
 		return nil, err
 	}
 	if _, err := stream.Write(raw); err != nil {
-		stream.Close()
+		stream.CancelWrite(0)
 		return nil, err
 	}
-	stream.Close()
+	if err := stream.Close(); err != nil {
+		return nil, err
+	}
 
-	respBytes, err := io.ReadAll(stream)
-	if err != nil {
+	respBytes := make([]byte, 2)
+	if _, err := io.ReadFull(stream, respBytes); err != nil {
 		return nil, err
 	}
-	if len(respBytes) < 2 {
-		return nil, io.ErrUnexpectedEOF
+	respLength := int(binary.BigEndian.Uint16(respBytes))
+	body := make([]byte, respLength)
+	if _, err := io.ReadFull(stream, body); err != nil {
+		return nil, err
 	}
-	body := respBytes[2:]
 
 	response := new(dns.Msg)
 	if err := response.Unpack(body); err != nil {
@@ -363,6 +394,7 @@ func forwardDNSOverQUIC(ctx context.Context, upstream string, msg *dns.Msg) (*dn
 	}
 	stream.SetDeadline(time.Time{})
 	quicSessPool.put(hostPort, session)
+	cleanup = false
 	return response, nil
 }
 
