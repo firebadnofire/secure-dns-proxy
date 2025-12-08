@@ -14,23 +14,28 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/quic-go/quic-go"
 )
 
 const (
-	relativeUpstreamConfPath     = "../etc/secure-dns-proxy/upstreams.conf"
-	homeFallbackUpstreamConfPath = "~/.config/secure-dns-proxy/upstreams.conf"
+	relativeUpstreamConfPath       = "../etc/secure-dns-proxy/upstreams.conf"
+	homeFallbackUpstreamConfPath   = "~/.config/secure-dns-proxy/upstreams.conf"
 	systemFallbackUpstreamConfPath = "/etc/secure-dns-proxy/upstreams.conf"
 )
 
 var (
-	upstreams   []string
-	insecure    bool
-	enablePMTUD bool
-	port        int
-	bind        string
+	upstreams             []string
+	insecure              bool
+	enablePMTUD           bool
+	port                  int
+	bind                  string
+	readTimeout           time.Duration
+	writeTimeout          time.Duration
+	maxConcurrentRequests int
+	requestSemaphore      chan struct{}
 )
 
 func getExecutableDir() string {
@@ -209,6 +214,17 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 }
 
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
+	if requestSemaphore != nil {
+		select {
+		case requestSemaphore <- struct{}{}:
+			defer func() { <-requestSemaphore }()
+		default:
+			log.Print("[WARN] Concurrency limit reached; returning SERVFAIL")
+			dns.HandleFailed(w, r)
+			return
+		}
+	}
+
 	if len(upstreams) == 0 {
 		log.Print("[ERROR] No DNS upstreams available")
 		dns.HandleFailed(w, r)
@@ -261,15 +277,22 @@ func main() {
 	flag.BoolVar(&enablePMTUD, "pmtud", true, "Enable QUIC Path MTU Discovery")
 	flag.IntVar(&port, "port", 53, "Port to bind on localhost")
 	flag.StringVar(&bind, "bind", "127.0.0.35", "Address to bind DNS server to")
+	flag.DurationVar(&readTimeout, "read-timeout", 0, "Per-connection read timeout")
+	flag.DurationVar(&writeTimeout, "write-timeout", 0, "Per-connection write timeout")
+	flag.IntVar(&maxConcurrentRequests, "max-concurrent-requests", 0, "Maximum simultaneous in-flight DNS queries (0 for unlimited)")
 	flag.Parse()
+
+	if maxConcurrentRequests > 0 {
+		requestSemaphore = make(chan struct{}, maxConcurrentRequests)
+	}
 
 	addr := bind + ":" + strconv.Itoa(port)
 
 	upstreams = loadUpstreams(relativeUpstreamConfPath)
 	dns.HandleFunc(".", handleDNSRequest)
 
-	udpServer := &dns.Server{Addr: addr, Net: "udp"}
-	tcpServer := &dns.Server{Addr: addr, Net: "tcp"}
+	udpServer := &dns.Server{Addr: addr, Net: "udp", ReadTimeout: readTimeout, WriteTimeout: writeTimeout}
+	tcpServer := &dns.Server{Addr: addr, Net: "tcp", ReadTimeout: readTimeout, WriteTimeout: writeTimeout}
 
 	go func() {
 		log.Printf("[INFO] Starting UDP server on %s", addr)
