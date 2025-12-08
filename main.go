@@ -9,6 +9,7 @@ import (
 	"flag"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -111,7 +112,7 @@ func forwardDNSOverHTTPS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("Accept", "application/dns-message")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: readTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -141,7 +142,8 @@ func forwardDNSOverTLS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 		InsecureSkipVerify: insecure,
 		NextProtos:         []string{"tls"},
 	}
-	conn, err := tls.Dial("tcp", host, tlsConfig)
+	dialer := &net.Dialer{Timeout: readTimeout}
+	conn, err := tls.DialWithDialer(dialer, "tcp", host, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +169,14 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	}
 	quicConf := &quic.Config{DisablePathMTUDiscovery: !enablePMTUD}
 
-	session, err := quic.DialAddr(context.Background(), hostPort, tlsConfig, quicConf)
+	ctx := context.Background()
+	if readTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, readTimeout)
+		defer cancel()
+	}
+
+	session, err := quic.DialAddr(ctx, hostPort, tlsConfig, quicConf)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +245,7 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	for _, upstream := range upstreams {
 		switch {
 		case strings.HasPrefix(upstream, "dns://"):
-			c := new(dns.Client)
+			c := &dns.Client{ReadTimeout: readTimeout, WriteTimeout: writeTimeout}
 			address := strings.TrimPrefix(upstream, "dns://")
 			if !strings.Contains(address, ":") {
 				address += ":53"
