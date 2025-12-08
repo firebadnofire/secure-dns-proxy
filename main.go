@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -112,7 +113,34 @@ func forwardDNSOverHTTPS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("Accept", "application/dns-message")
 
-	client := &http.Client{Timeout: readTimeout}
+	parsedURL, err := url.Parse(upstream)
+	if err != nil {
+		return nil, err
+	}
+
+	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure}}
+
+	dialer := &net.Dialer{}
+	if readTimeout > 0 {
+		dialer.Timeout = readTimeout
+		transport.TLSHandshakeTimeout = readTimeout
+		transport.ResponseHeaderTimeout = readTimeout
+		transport.IdleConnTimeout = readTimeout
+	}
+	if writeTimeout > 0 {
+		transport.ExpectContinueTimeout = writeTimeout
+	}
+	transport.DialContext = dialer.DialContext
+
+	if parsedURL.Hostname() != "" {
+		transport.TLSClientConfig.ServerName = parsedURL.Hostname()
+	}
+
+	clientTimeout := readTimeout + writeTimeout
+	client := &http.Client{Transport: transport}
+	if clientTimeout > 0 {
+		client.Timeout = clientTimeout
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -150,8 +178,14 @@ func forwardDNSOverTLS(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 	defer conn.Close()
 
 	dnsConn := &dns.Conn{Conn: conn}
+	if writeTimeout > 0 {
+		_ = dnsConn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	}
 	if err := dnsConn.WriteMsg(msg); err != nil {
 		return nil, err
+	}
+	if readTimeout > 0 {
+		_ = dnsConn.SetReadDeadline(time.Now().Add(readTimeout))
 	}
 	return dnsConn.ReadMsg()
 }
@@ -187,6 +221,10 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 		return nil, err
 	}
 
+	if writeTimeout > 0 {
+		_ = stream.SetWriteDeadline(time.Now().Add(writeTimeout))
+	}
+
 	raw, err := msg.Pack()
 	if err != nil {
 		stream.Close()
@@ -205,6 +243,10 @@ func forwardDNSOverQUIC(upstream string, msg *dns.Msg) (*dns.Msg, error) {
 		return nil, err
 	}
 	stream.Close()
+
+	if readTimeout > 0 {
+		_ = stream.SetReadDeadline(time.Now().Add(readTimeout))
+	}
 
 	respBytes, err := io.ReadAll(stream)
 	if err != nil {
