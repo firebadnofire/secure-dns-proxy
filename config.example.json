@@ -1,0 +1,39 @@
+{
+  "bind_address": "127.0.0.35",
+  "port": 53,
+  "insecure_tls": false,
+  "upstream_policy": "round_robin",
+  "upstream_race_fanout": 2,
+  "upstreams": [
+    {"url": "https://1.1.1.1/dns-query"},
+    {"url": "tls://1.1.1.1"},
+    {"url": "quic://1.1.1.1"},
+    {"url": "dns://9.9.9.9"}
+  ],
+  "cache": {
+    "enabled": true,
+    "capacity": 2048,
+    "default_ttl": "15s",
+    "negative_ttl": "10s",
+    "respect_record_ttl": true
+  },
+  "pools": {
+    "tls": {"size": 16, "idle_timeout": "90s"},
+    "quic": {"size": 8, "idle_timeout": "90s"},
+    "http_transport": {
+      "max_idle_conns": 128,
+      "max_idle_conns_per_host": 32,
+      "idle_conn_timeout": "90s",
+      "tls_handshake_timeout": "5s"
+    }
+  },
+  "timeouts": {
+    "upstream": "5s",
+    "dial": "2s",
+    "read": "3s"
+  },
+  "rate_limit": {"max_in_flight": 1024},
+  "logging": {"level": "info"},
+  "metrics": {"enabled": true},
+  "prewarm_pools": true
+}

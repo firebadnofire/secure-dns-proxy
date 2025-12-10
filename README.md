@@ -1,43 +1,83 @@
 # secure-dns-proxy
 
-`secure-dns-proxy` proxies DNS queries
+`secure-dns-proxy` is a local DNS stub that accepts UDP/TCP DNS queries and forwards them to plaintext DNS, DNS-over-HTTPS (DoH), DNS-over-TLS (DoT), or DNS-over-QUIC (DoQ) upstreams. The rewrite focuses on efficient connection reuse, pluggable upstream policies, caching, and safe concurrency for high-QPS workloads.
 
-## Why?
+## Features
+- UDP/TCP ingress backed by `miekg/dns` with graceful shutdown
+- Pluggable upstream selection: round-robin (default), sequential fallback, or parallel race fanout
+- Connection reuse pools for DoT and DoQ with optional pre-warming
+- Shared HTTP transport for DoH keep-alives
+- Positive and negative TTL caching with request coalescing
+- Rate limiting/backpressure to cap concurrent upstream work
+- Circuit-breaker style upstream health tracking
+- Structured logging and lightweight internal metrics hooks
+- EDNS0 support with sane defaults
 
-A lot of systems don't natively support DNS over HTTPS, DNS over TLS, and especially DNS over QUIC. This project aims to provide support for these transport layers without heavy system modifications. 
+## Getting started
+Build with Go 1.22 or newer:
 
-## How?
-
-DoH, DoT, and DoQ are all layers that go over unencrypted or standard DNS, so all you really need to do is safely deliver them and unwrap them, so that's exactly what this does. Your computer makes a query to `127.0.0.35:53` and `secure-dns-proxy` will reach out to an upstream in `etc/upstreams.conf`, say `tls://doh.archuser.org`. The DoT host will reply in DoT, but when it reaches the system it is unwrapped into standard DNS. Since it is bound to `127.0.0.35`, no unencrypted data leaves the system. 
-
-- [x] Standard DNS support
-- [x] DNS over HTTPS (DoH) support 
-- [x] DNS over TLS (DoT) support
-- [x] DNS over QUIC (DoQ) support
-
-## Build instructions
-
-```
-git clone https://codeberg.org/firebadnofire/secure-dns-proxy
-cd secure-dns-proxy
-make
+```sh
+go build ./cmd/secure-dns-proxy
 ```
 
-The compiled build will be put in `dist/` as a `tar.gz` containing a portable build. You can extract this and move it's contents into your system.
-OR
+Run with a JSON configuration file:
 
-`go install archuser.org/secure-dns-proxy@latest`
+```sh
+./secure-dns-proxy --config config.example.json
+```
 
-# Notes
+### Example configuration (config.example.json)
+```json
+{
+  "bind_address": "127.0.0.35",
+  "port": 53,
+  "insecure_tls": false,
+  "upstream_policy": "race",
+  "upstream_race_fanout": 2,
+  "upstreams": [
+    {"url": "https://1.1.1.1/dns-query"},
+    {"url": "tls://1.1.1.1"},
+    {"url": "quic://1.1.1.1"},
+    {"url": "dns://9.9.9.9:53"}
+  ],
+  "cache": {
+    "enabled": true,
+    "capacity": 4096,
+    "default_ttl": "15s",
+    "negative_ttl": "10s",
+    "respect_record_ttl": true
+  },
+  "pools": {
+    "tls": {"size": 32, "idle_timeout": "90s"},
+    "quic": {"size": 16, "idle_timeout": "90s"},
+    "http_transport": {
+      "max_idle_conns": 256,
+      "max_idle_conns_per_host": 64,
+      "idle_conn_timeout": "90s",
+      "tls_handshake_timeout": "5s"
+    }
+  },
+  "timeouts": {
+    "upstream": "5s",
+    "dial": "2s",
+    "read": "3s"
+  },
+  "rate_limit": {"max_in_flight": 2048},
+  "logging": {"level": "info"},
+  "metrics": {"enabled": true},
+  "prewarm_pools": true
+}
+```
 
-This project is licensed under the [GNU Affero General Public License](https://www.gnu.org/licenses/agpl-3.0.en.html). [What is this](https://choosealicense.com/licenses/agpl-3.0/)?
+### Notes on architecture changes
+- **DoH transport reuse:** a single tuned `http.Client` backs all DoH requests to preserve keep-alives.
+- **Connection pools:** DoT and DoQ share configurable pools with optional pre-warming to reduce handshake latency.
+- **DoQ correctness:** requests close the write side only after sending, then read the response before closing the stream.
+- **Timeout hygiene:** timeouts are enforced via contexts without leaking deadlines onto pooled connections.
+- **Caching & coalescing:** identical in-flight queries collapse to one upstream call; responses populate positive/negative TTL caches per RFC 2308.
+- **Health & policy:** upstreams track failures and back off; round-robin, sequential, and race policies balance resiliency and latency.
+- **Backpressure:** a limiter caps concurrent upstream work to prevent dial storms during spikes.
+- **Logging:** only state changes and errors are logged; verbosity is configurable.
 
-To enable pmtud, use `--pmtud`
-
-To switch the bind address, use `--bind` (eg. `--bind 127.0.0.53`)
-
-To switch the bind port, use `--port` (eg. `--port 54`)
-
-`/etc/secure-dns-proxy/upstreams.conf` as well as `~/.config/secure-dns-proxy/upstreams.conf` are also valid conf locations.
-
-There is a `--insecure` flag you can use at runtime (eg. `sudo ./secure-dns-proxy --insecure`) that will disable TLS certificate verification. You should NEVER need to use this unless you are testing something, in which you should know very well what you are about to do.
+## License
+GNU Affero General Public License v3.0
