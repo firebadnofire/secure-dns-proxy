@@ -109,7 +109,7 @@ func (c *Cache) ttlForMessage(msg *dns.Msg) (time.Duration, bool) {
 		ttlSeconds = uint32(c.cfg.NegativeTTL.Seconds())
 		for _, ns := range msg.Ns {
 			if soa, ok := ns.(*dns.SOA); ok {
-				ttlSeconds = soa.Minimum
+				ttlSeconds = soa.Minttl
 				break
 			}
 		}

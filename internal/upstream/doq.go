@@ -69,7 +69,7 @@ func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 		d.RecordFailure(err)
 		return nil, err
 	}
-	if err := stream.CloseWrite(); err != nil {
+	if err := stream.Close(); err != nil {
 		stream.CancelWrite(0)
 		releaseOnce(err)
 		d.RecordFailure(err)
@@ -77,7 +77,6 @@ func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	}
 
 	respBuf, err := io.ReadAll(stream)
-	stream.Close()
 	releaseOnce(err)
 	if err != nil {
 		d.RecordFailure(err)
