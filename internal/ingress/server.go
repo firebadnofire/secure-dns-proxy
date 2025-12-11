@@ -86,9 +86,23 @@ func (s *Server) handle(ctx context.Context, w dns.ResponseWriter, req *dns.Msg)
 }
 
 func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
+	var totalQueries uint64
+	if s.metrics != nil {
+		totalQueries = s.metrics.RecordRequest()
+	}
+
+	answers := 0
+	authorities := 0
+	extra := 0
+	if resp != nil {
+		answers = len(resp.Answer)
+		authorities = len(resp.Ns)
+		extra = len(resp.Extra)
+	}
+
 	if len(req.Question) > 0 {
 		q := req.Question[0]
-		s.log.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype], "class", dns.ClassToString[q.Qclass], "rcode", dns.RcodeToString[resp.Rcode], "cache_hit", cacheHit)
+		s.log.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype], "class", dns.ClassToString[q.Qclass], "rcode", dns.RcodeToString[resp.Rcode], "cache_hit", cacheHit, "answer_records", answers, "authority_records", authorities, "extra_records", extra, "queries_total", totalQueries)
 	}
 
 	if s.metrics == nil {
