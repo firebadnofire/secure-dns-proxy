@@ -59,9 +59,7 @@ func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		if isNetworkError(err) {
 			closeIdleHTTPConnections(d.client)
 		}
@@ -78,9 +76,7 @@ func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		if isNetworkError(err) {
 			closeIdleHTTPConnections(d.client)
 		}
@@ -88,9 +84,7 @@ func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	}
 	dnsResp := new(dns.Msg)
 	if err := dnsResp.Unpack(body); err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 	if recordHealth {

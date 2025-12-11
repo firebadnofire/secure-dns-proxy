@@ -52,9 +52,7 @@ func (p *PlainDNS) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bo
 		_ = rtt
 	}
 	if err != nil {
-		if recordHealth {
-			p.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, p.RecordFailure)
 		return nil, err
 	}
 	if recordHealth {

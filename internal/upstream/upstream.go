@@ -12,12 +12,12 @@ var ErrCircuitOpen = errors.New("upstream temporarily unavailable")
 
 // Upstream provides a unified interface for communicating with DNS upstreams.
 type Upstream interface {
-        ID() string
-        Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
-        Healthy() bool
-        Probe(ctx context.Context, msg *dns.Msg) error
-        RecordSuccess()
-        RecordFailure(err error)
+	ID() string
+	Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
+	Healthy() bool
+	Probe(ctx context.Context, msg *dns.Msg) error
+	RecordSuccess()
+	RecordFailure(err error)
 }
 
 type healthState struct {
@@ -60,4 +60,14 @@ func (h *healthState) failure() {
 	if h.failures >= h.maxFailures {
 		h.backoffUntil = time.Now().Add(h.cooldown)
 	}
+}
+
+func recordFailure(recordHealth bool, err error, record func(error)) {
+	if !recordHealth || err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	record(err)
 }

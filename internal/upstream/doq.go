@@ -50,9 +50,7 @@ func (d *DoQ) Probe(ctx context.Context, msg *dns.Msg) error {
 func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (*dns.Msg, error) {
 	session, release, err := d.pool.Acquire(ctx)
 	if err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 	releaseOnce := func(e error) {
@@ -66,9 +64,7 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	stream, err := session.OpenStreamSync(ctx)
 	if err != nil {
 		releaseOnce(err)
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 
@@ -84,34 +80,26 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	if _, err := stream.Write(payload); err != nil {
 		stream.CancelWrite(0)
 		releaseOnce(err)
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 	if err := stream.Close(); err != nil {
 		stream.CancelWrite(0)
 		releaseOnce(err)
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 
 	respBuf, err := io.ReadAll(stream)
 	releaseOnce(err)
 	if err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 
 	response := new(dns.Msg)
 	if err := response.Unpack(respBuf); err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 	if recordHealth {

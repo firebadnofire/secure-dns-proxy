@@ -45,9 +45,7 @@ func (d *DoT) Probe(ctx context.Context, msg *dns.Msg) error {
 func (d *DoT) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (*dns.Msg, error) {
 	conn, release, err := d.pool.Acquire(ctx)
 	if err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 	releaseOnce := func(e error) {
@@ -65,17 +63,13 @@ func (d *DoT) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	tcp := &dns.Conn{Conn: conn}
 	if err := tcp.WriteMsg(msg); err != nil {
 		releaseOnce(err)
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 	resp, err := tcp.ReadMsg()
 	releaseOnce(err)
 	if err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
+		recordFailure(recordHealth, err, d.RecordFailure)
 		return nil, err
 	}
 	if recordHealth {
