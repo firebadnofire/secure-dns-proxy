@@ -5,10 +5,9 @@
   "upstream_policy": "round_robin",
   "upstream_race_fanout": 2,
   "upstreams": [
-    {"url": "https://1.1.1.1/dns-query"},
-    {"url": "tls://1.1.1.1"},
-    {"url": "quic://1.1.1.1"},
-    {"url": "dns://9.9.9.9"}
+    {"url": "https://doh.archuser.org/dns-query"},
+    {"url": "tls://doh.archuser.org:853"},
+    {"url": "quic://doh.archuser.org:853"}
   ],
   "cache": {
     "enabled": true,
