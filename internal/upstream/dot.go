@@ -84,6 +84,13 @@ func (d *DoT) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	return resp, nil
 }
 
+func (d *DoT) reset() {
+	if d.pool != nil {
+		d.pool.Reset()
+	}
+	d.health = newHealthState(d.health.maxFailures, d.health.cooldown)
+}
+
 // MakeTLSFactory returns a dialer for the TLS pool.
 func MakeTLSFactory(address string, tlsConfig *tls.Config, dialer *net.Dialer) pool.TLSConnFactory {
 	return func(ctx context.Context) (net.Conn, error) {

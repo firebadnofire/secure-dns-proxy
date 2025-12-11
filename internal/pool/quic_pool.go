@@ -94,3 +94,15 @@ func (p *QUICConnPool) tryStore(conn quic.Connection) {
 		conn.CloseWithError(0, "overflow")
 	}
 }
+
+// Reset drains any pooled sessions so new connections are established on next use.
+func (p *QUICConnPool) Reset() {
+	for {
+		select {
+		case pc := <-p.conns:
+			pc.conn.CloseWithError(0, "reset")
+		default:
+			return
+		}
+	}
+}

@@ -101,3 +101,15 @@ func (p *TLSConnPool) tryStore(conn net.Conn) {
 		_ = conn.Close()
 	}
 }
+
+// Reset drains and closes any pooled connections so new dials occur next acquisition.
+func (p *TLSConnPool) Reset() {
+	for {
+		select {
+		case pc := <-p.conns:
+			_ = pc.conn.Close()
+		default:
+			return
+		}
+	}
+}

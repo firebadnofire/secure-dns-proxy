@@ -116,6 +116,13 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	return response, nil
 }
 
+func (d *DoQ) reset() {
+	if d.pool != nil {
+		d.pool.Reset()
+	}
+	d.health = newHealthState(d.health.maxFailures, d.health.cooldown)
+}
+
 // MakeQUICFactory constructs a QUIC dialer suitable for pooling.
 func MakeQUICFactory(address string, tlsConf *tls.Config, dialer *net.Dialer) pool.QUICConnFactory {
 	return func(ctx context.Context) (quic.Connection, error) {

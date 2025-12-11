@@ -63,6 +63,10 @@ func (p *PlainDNS) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bo
 	return resp, nil
 }
 
+func (p *PlainDNS) reset() {
+	p.health = newHealthState(p.health.maxFailures, p.health.cooldown)
+}
+
 // BootstrapResolver resolves hostnames using system resolver when upstream is configured with hostname only.
 func BootstrapResolver(ctx context.Context, hostport string) (string, error) {
 	host, port, err := net.SplitHostPort(hostport)

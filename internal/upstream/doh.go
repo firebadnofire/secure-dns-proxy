@@ -90,3 +90,10 @@ func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	}
 	return dnsResp, nil
 }
+
+func (d *DoH) reset() {
+	if tr, ok := d.client.Transport.(*http.Transport); ok {
+		tr.CloseIdleConnections()
+	}
+	d.health = newHealthState(d.health.maxFailures, d.health.cooldown)
+}

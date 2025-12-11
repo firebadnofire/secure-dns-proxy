@@ -291,3 +291,20 @@ func (m *Manager) DoHealthProbe(ctx context.Context, msg *dns.Msg) []error {
 	}
 	return errs
 }
+
+// Reset tears down pooled connections and clears health backoffs so network changes
+// don't strand the manager with stale sockets.
+func (m *Manager) Reset() {
+	for _, up := range m.upstreams {
+		switch u := up.(type) {
+		case *DoH:
+			u.reset()
+		case *DoT:
+			u.reset()
+		case *DoQ:
+			u.reset()
+		case *PlainDNS:
+			u.reset()
+		}
+	}
+}
