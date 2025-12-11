@@ -40,6 +40,8 @@ By default this places the binary in `/usr/local/bin`, a runnable config in `/et
 sudo systemctl enable --now secure-dns-proxy.service
 ```
 
+The service unit requests `CAP_NET_BIND_SERVICE` and `CAP_NET_ADMIN`, allows unlimited memlock, and ships a sysctl drop-in that raises `net.core.rmem_max`/`net.core.rmem_default` to 8 MiB to satisfy QUIC receive buffer sizing guidance. If you prefer different values, adjust `/etc/sysctl.d/80-secure-dns-proxy.conf` and reload via `sudo sysctl --system`.
+
 To remove the installation, use either target:
 
 ```sh

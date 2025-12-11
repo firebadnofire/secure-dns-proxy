@@ -71,7 +71,7 @@ install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
 	$(INSTALL) -m 0644 $(SYSTEMD_SERVICE) $(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	$(INSTALL) -d $(DESTDIR)$(SYSCTL_DIR)
 	$(INSTALL) -m 0644 $(SYSCTL_CONF) $(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf
-	[ -z "$(DESTDIR)" ] && sysctl -q -w net.core.rmem_max=2500000 net.core.rmem_default=2500000 || true
+	[ -z "$(DESTDIR)" ] && sysctl -q -w net.core.rmem_max=8388608 net.core.rmem_default=8388608 || true
 
 .PHONY: uninstall deinstall
 uninstall deinstall:
