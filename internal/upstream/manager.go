@@ -34,16 +34,17 @@ type Manager struct {
 
 // BuildManager constructs upstream clients and pools from config.
 func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metrics) (*Manager, *http.Client, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
+	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
+
 	transport := &http.Transport{
+		DialContext:         dialer.DialContext,
 		MaxIdleConns:        cfg.Pools.HTTPTransport.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Pools.HTTPTransport.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.Pools.HTTPTransport.IdleConnTimeout.Duration(),
 		TLSHandshakeTimeout: cfg.Pools.HTTPTransport.TLSHandshakeTimeout.Duration(),
 	}
 	httpClient := &http.Client{Transport: transport}
-
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
-	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
 
 	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics, healthCfg: cfg.HealthChecks, upstreamTimeout: cfg.Timeouts.Upstream.Duration()}
 

@@ -3,8 +3,10 @@ package upstream
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 
 	"github.com/miekg/dns"
@@ -60,6 +62,9 @@ func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		if recordHealth {
 			d.RecordFailure(err)
 		}
+		if isNetworkError(err) {
+			closeIdleHTTPConnections(d.client)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -76,6 +81,9 @@ func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		if recordHealth {
 			d.RecordFailure(err)
 		}
+		if isNetworkError(err) {
+			closeIdleHTTPConnections(d.client)
+		}
 		return nil, err
 	}
 	dnsResp := new(dns.Msg)
@@ -89,4 +97,15 @@ func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		d.RecordSuccess()
 	}
 	return dnsResp, nil
+}
+
+func isNetworkError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+func closeIdleHTTPConnections(client *http.Client) {
+	if transport, ok := client.Transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
 }
