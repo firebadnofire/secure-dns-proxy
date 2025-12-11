@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -21,6 +22,10 @@ type Server struct {
 	res     *resolver.Resolver
 	log     logging.Logger
 	metrics *metrics.Metrics
+
+	requestCount atomic.Uint64
+	trafficIn    atomic.Uint64
+	trafficOut   atomic.Uint64
 }
 
 // New constructs a DNS ingress server bound to address:port.
@@ -86,9 +91,9 @@ func (s *Server) handle(ctx context.Context, w dns.ResponseWriter, req *dns.Msg)
 }
 
 func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
-	var totalQueries uint64
+	totalQueries := s.requestCount.Add(1)
 	if s.metrics != nil {
-		totalQueries = s.metrics.RecordRequest()
+		s.metrics.RecordRequest()
 	}
 
 	answers := 0
@@ -104,15 +109,8 @@ func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
 
 	if len(req.Question) > 0 {
 		q := req.Question[0]
-		args := []any{"name", q.Name, "type", dns.TypeToString[q.Qtype], "class", dns.ClassToString[q.Qclass], "rcode", rcode, "cache_hit", cacheHit, "answer_records", answers, "authority_records", authorities, "extra_records", extra}
-		if s.metrics != nil {
-			args = append(args, "queries_total", totalQueries)
-		}
+		args := []any{"name", q.Name, "type", dns.TypeToString[q.Qtype], "class", dns.ClassToString[q.Qclass], "rcode", rcode, "cache_hit", cacheHit, "answer_records", answers, "authority_records", authorities, "extra_records", extra, "queries_total", totalQueries}
 		s.log.Info("query", args...)
-	}
-
-	if s.metrics == nil {
-		return
 	}
 
 	reqSize := uint64(req.Len())
@@ -120,7 +118,11 @@ func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
 	if resp != nil {
 		respSize = uint64(resp.Len())
 	}
-	inTotal, outTotal := s.metrics.AddTraffic(reqSize, respSize)
+	inTotal := s.trafficIn.Add(reqSize)
+	outTotal := s.trafficOut.Add(respSize)
+	if s.metrics != nil {
+		s.metrics.AddTraffic(reqSize, respSize)
+	}
 
 	s.log.Info("cumulative traffic", "in_bytes", inTotal, "in_mib", fmt.Sprintf("%.3f", bytesToMiB(inTotal)), "in_gib", fmt.Sprintf("%.3f", bytesToGiB(inTotal)), "out_bytes", outTotal, "out_mib", fmt.Sprintf("%.3f", bytesToMiB(outTotal)), "out_gib", fmt.Sprintf("%.3f", bytesToGiB(outTotal)))
 }
