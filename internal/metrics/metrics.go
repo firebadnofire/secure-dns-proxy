@@ -10,6 +10,8 @@ type Metrics struct {
 	PoolHits         atomic.Uint64
 	PoolMisses       atomic.Uint64
 	InFlightRequests atomic.Int64
+	TrafficInBytes   atomic.Uint64
+	TrafficOutBytes  atomic.Uint64
 }
 
 func (m *Metrics) RecordCacheHit()  { m.CacheHits.Add(1) }
@@ -20,3 +22,10 @@ func (m *Metrics) RecordSuccess()   { m.UpstreamSuccess.Add(1) }
 func (m *Metrics) RecordFailure()   { m.UpstreamFailures.Add(1) }
 func (m *Metrics) IncInFlight()     { m.InFlightRequests.Add(1) }
 func (m *Metrics) DecInFlight()     { m.InFlightRequests.Add(-1) }
+
+// AddTraffic records ingress and egress byte counts and returns new totals.
+func (m *Metrics) AddTraffic(inBytes, outBytes uint64) (uint64, uint64) {
+	inTotal := m.TrafficInBytes.Add(inBytes)
+	outTotal := m.TrafficOutBytes.Add(outBytes)
+	return inTotal, outTotal
+}

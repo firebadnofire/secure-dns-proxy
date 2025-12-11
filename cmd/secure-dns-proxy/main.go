@@ -38,7 +38,7 @@ func main() {
 	}
 
 	res := resolver.New(cfg, mgr, log, metricsSink)
-	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log)
+	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log, metricsSink)
 
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start server: %v\n", err)
