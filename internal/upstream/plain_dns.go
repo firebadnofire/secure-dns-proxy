@@ -18,7 +18,7 @@ type PlainDNS struct {
 }
 
 func NewPlainDNS(cfg config.UpstreamConfig, timeout time.Duration) *PlainDNS {
-	return &PlainDNS{address: cfg.URL, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown)}
+	return &PlainDNS{address: cfg.URL, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration())}
 }
 
 func (p *PlainDNS) ID() string { return fmt.Sprintf("dns://%s", p.address) }

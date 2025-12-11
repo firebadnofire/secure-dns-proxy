@@ -18,7 +18,7 @@ type DoT struct {
 }
 
 func NewDoT(cfg config.UpstreamConfig, pool *pool.TLSConnPool) *DoT {
-	return &DoT{address: cfg.URL, pool: pool, health: newHealthState(cfg.MaxFailures, cfg.Cooldown)}
+	return &DoT{address: cfg.URL, pool: pool, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration())}
 }
 
 func (d *DoT) ID() string { return d.address }

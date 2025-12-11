@@ -35,7 +35,7 @@ func New(cfg config.Config, upstream *upstream.Manager, log logging.Logger, metr
 		metrics:  metrics,
 		limiter:  limiter,
 		log:      log,
-		timeout:  cfg.Timeouts.Upstream,
+		timeout:  cfg.Timeouts.Upstream.Duration(),
 	}
 }
 

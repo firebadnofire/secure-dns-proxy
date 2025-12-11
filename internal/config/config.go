@@ -8,6 +8,47 @@ import (
 	"time"
 )
 
+// Duration unmarshals human-friendly duration strings (e.g. "5s") or numeric
+// nanoseconds from JSON.
+// It retains time.Duration semantics for arithmetic when converted with the
+// Duration() helper.
+type Duration time.Duration
+
+// UnmarshalJSON implements encoding/json unmarshalling for Duration.
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 {
+		return fmt.Errorf("empty duration")
+	}
+
+	// Attempt string-based duration first.
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		parsed, err := time.ParseDuration(s)
+		if err != nil {
+			return err
+		}
+		*d = Duration(parsed)
+		return nil
+	}
+
+	// Fallback to numeric nanoseconds.
+	var n int64
+	if err := json.Unmarshal(b, &n); err == nil {
+		*d = Duration(time.Duration(n))
+		return nil
+	}
+
+	return fmt.Errorf("invalid duration: %s", string(b))
+}
+
+// Duration converts the custom Duration type back to time.Duration.
+func (d Duration) Duration() time.Duration {
+	return time.Duration(d)
+}
+
 // Config describes the full runtime configuration for the proxy.
 type Config struct {
 	BindAddress string           `json:"bind_address"`
@@ -29,20 +70,20 @@ type Config struct {
 
 // UpstreamConfig describes a single upstream resolver.
 type UpstreamConfig struct {
-	URL         string        `json:"url"`
-	Bootstrap   string        `json:"bootstrap"`
-	MaxFailures int           `json:"max_failures"`
-	Cooldown    time.Duration `json:"cooldown"`
-	Weight      int           `json:"weight"`
+	URL         string   `json:"url"`
+	Bootstrap   string   `json:"bootstrap"`
+	MaxFailures int      `json:"max_failures"`
+	Cooldown    Duration `json:"cooldown"`
+	Weight      int      `json:"weight"`
 }
 
 // CacheConfig tunes the TTL cache behavior.
 type CacheConfig struct {
-	Enabled          bool          `json:"enabled"`
-	Capacity         int           `json:"capacity"`
-	DefaultTTL       time.Duration `json:"default_ttl"`
-	NegativeTTL      time.Duration `json:"negative_ttl"`
-	RespectRecordTTL bool          `json:"respect_record_ttl"`
+	Enabled          bool     `json:"enabled"`
+	Capacity         int      `json:"capacity"`
+	DefaultTTL       Duration `json:"default_ttl"`
+	NegativeTTL      Duration `json:"negative_ttl"`
+	RespectRecordTTL bool     `json:"respect_record_ttl"`
 }
 
 // PoolConfig tunes upstream connection reuse.
@@ -55,23 +96,23 @@ type PoolConfig struct {
 
 // SizedPoolConfig sets pool sizes and idle handling.
 type SizedPoolConfig struct {
-	Size        int           `json:"size"`
-	IdleTimeout time.Duration `json:"idle_timeout"`
+	Size        int      `json:"size"`
+	IdleTimeout Duration `json:"idle_timeout"`
 }
 
 // HTTPTransportConfig exposes knobs for the DoH client transport.
 type HTTPTransportConfig struct {
-	MaxIdleConns        int           `json:"max_idle_conns"`
-	MaxIdleConnsPerHost int           `json:"max_idle_conns_per_host"`
-	IdleConnTimeout     time.Duration `json:"idle_conn_timeout"`
-	TLSHandshakeTimeout time.Duration `json:"tls_handshake_timeout"`
+	MaxIdleConns        int      `json:"max_idle_conns"`
+	MaxIdleConnsPerHost int      `json:"max_idle_conns_per_host"`
+	IdleConnTimeout     Duration `json:"idle_conn_timeout"`
+	TLSHandshakeTimeout Duration `json:"tls_handshake_timeout"`
 }
 
 // TimeoutConfig controls upstream interaction timeouts.
 type TimeoutConfig struct {
-	Upstream time.Duration `json:"upstream"`
-	Dial     time.Duration `json:"dial"`
-	Read     time.Duration `json:"read"`
+	Upstream Duration `json:"upstream"`
+	Dial     Duration `json:"dial"`
+	Read     Duration `json:"read"`
 }
 
 // RateLimit caps simultaneous upstream exchanges.
@@ -100,24 +141,24 @@ func Default() Config {
 		Cache: CacheConfig{
 			Enabled:          true,
 			Capacity:         2048,
-			DefaultTTL:       15 * time.Second,
-			NegativeTTL:      10 * time.Second,
+			DefaultTTL:       Duration(15 * time.Second),
+			NegativeTTL:      Duration(10 * time.Second),
 			RespectRecordTTL: true,
 		},
 		Pools: PoolConfig{
-			TLS:  SizedPoolConfig{Size: 16, IdleTimeout: 90 * time.Second},
-			QUIC: SizedPoolConfig{Size: 8, IdleTimeout: 90 * time.Second},
+			TLS:  SizedPoolConfig{Size: 16, IdleTimeout: Duration(90 * time.Second)},
+			QUIC: SizedPoolConfig{Size: 8, IdleTimeout: Duration(90 * time.Second)},
 			HTTPTransport: HTTPTransportConfig{
 				MaxIdleConns:        128,
 				MaxIdleConnsPerHost: 32,
-				IdleConnTimeout:     90 * time.Second,
-				TLSHandshakeTimeout: 5 * time.Second,
+				IdleConnTimeout:     Duration(90 * time.Second),
+				TLSHandshakeTimeout: Duration(5 * time.Second),
 			},
 		},
 		Timeouts: TimeoutConfig{
-			Upstream: 5 * time.Second,
-			Dial:     2 * time.Second,
-			Read:     3 * time.Second,
+			Upstream: Duration(5 * time.Second),
+			Dial:     Duration(2 * time.Second),
+			Read:     Duration(3 * time.Second),
 		},
 		RateLimit:    RateLimit{MaxInFlight: 1024},
 		Logging:      LoggingConfig{Level: "info"},

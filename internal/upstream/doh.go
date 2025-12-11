@@ -19,7 +19,7 @@ type DoH struct {
 }
 
 func NewDoH(cfg config.UpstreamConfig, client *http.Client) *DoH {
-	return &DoH{url: cfg.URL, client: client, health: newHealthState(cfg.MaxFailures, cfg.Cooldown)}
+	return &DoH{url: cfg.URL, client: client, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration())}
 }
 
 func (d *DoH) ID() string { return d.url }

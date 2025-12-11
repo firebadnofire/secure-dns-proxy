@@ -29,7 +29,10 @@ func main() {
 	}
 
 	log := logging.New(logging.Level(cfg.Logging.Level))
-	metricsSink := &metrics.Metrics{}
+	var metricsSink *metrics.Metrics
+	if cfg.Metrics.Enabled {
+		metricsSink = &metrics.Metrics{}
+	}
 
 	mgr, _, err := upstream.BuildManager(cfg, log, metricsSink)
 	if err != nil {
@@ -38,7 +41,7 @@ func main() {
 	}
 
 	res := resolver.New(cfg, mgr, log, metricsSink)
-	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log)
+	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log, metricsSink)
 
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start server: %v\n", err)

@@ -33,13 +33,13 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 	transport := &http.Transport{
 		MaxIdleConns:        cfg.Pools.HTTPTransport.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Pools.HTTPTransport.MaxIdleConnsPerHost,
-		IdleConnTimeout:     cfg.Pools.HTTPTransport.IdleConnTimeout,
-		TLSHandshakeTimeout: cfg.Pools.HTTPTransport.TLSHandshakeTimeout,
+		IdleConnTimeout:     cfg.Pools.HTTPTransport.IdleConnTimeout.Duration(),
+		TLSHandshakeTimeout: cfg.Pools.HTTPTransport.TLSHandshakeTimeout.Duration(),
 	}
 	httpClient := &http.Client{Transport: transport}
 
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
-	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial}
+	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
 
 	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics}
 
@@ -69,7 +69,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "53")
 		}
-		return NewPlainDNS(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, cfg.Timeouts.Upstream), nil
+		return NewPlainDNS(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, cfg.Timeouts.Upstream.Duration()), nil
 	case "https":
 		return NewDoH(upCfg, httpClient), nil
 	case "tls":
@@ -78,7 +78,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 			addr = net.JoinHostPort(addr, "853")
 		}
 		factory := MakeTLSFactory(addr, tlsConf, dialer)
-		tlsPool := pool.NewTLSConnPool(cfg.Pools.TLS.Size, cfg.Pools.TLS.IdleTimeout, factory, log, metrics)
+		tlsPool := pool.NewTLSConnPool(cfg.Pools.TLS.Size, cfg.Pools.TLS.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go tlsPool.Prewarm(context.Background())
 		}
@@ -88,12 +88,21 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "784")
 		}
-		factory := MakeQUICFactory(addr, tlsConf, dialer)
-		quicPool := pool.NewQUICConnPool(cfg.Pools.QUIC.Size, cfg.Pools.QUIC.IdleTimeout, factory, log, metrics)
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid quic upstream %s: %w", target, err)
+		}
+		quicTLS := tlsConf.Clone()
+		quicTLS.NextProtos = []string{"doq"}
+		if quicTLS.ServerName == "" {
+			quicTLS.ServerName = host
+		}
+		factory := MakeQUICFactory(addr, quicTLS, dialer)
+		quicPool := pool.NewQUICConnPool(cfg.Pools.QUIC.Size, cfg.Pools.QUIC.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go quicPool.Prewarm(context.Background())
 		}
-		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, tlsConf), nil
+		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS), nil
 	default:
 		return nil, fmt.Errorf("unsupported scheme %s", parsed.Scheme)
 	}

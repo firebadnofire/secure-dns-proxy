@@ -32,27 +32,26 @@ Run with a JSON configuration file:
   "bind_address": "127.0.0.35",
   "port": 53,
   "insecure_tls": false,
-  "upstream_policy": "race",
+  "upstream_policy": "round_robin",
   "upstream_race_fanout": 2,
   "upstreams": [
-    {"url": "https://1.1.1.1/dns-query"},
-    {"url": "tls://1.1.1.1"},
-    {"url": "quic://1.1.1.1"},
-    {"url": "dns://9.9.9.9:53"}
+    {"url": "https://doh.archuser.org/dns-query"},
+    {"url": "tls://doh.archuser.org:853"},
+    {"url": "quic://doh.archuser.org:853"}
   ],
   "cache": {
     "enabled": true,
-    "capacity": 4096,
+    "capacity": 2048,
     "default_ttl": "15s",
     "negative_ttl": "10s",
     "respect_record_ttl": true
   },
   "pools": {
-    "tls": {"size": 32, "idle_timeout": "90s"},
-    "quic": {"size": 16, "idle_timeout": "90s"},
+    "tls": {"size": 16, "idle_timeout": "90s"},
+    "quic": {"size": 8, "idle_timeout": "90s"},
     "http_transport": {
-      "max_idle_conns": 256,
-      "max_idle_conns_per_host": 64,
+      "max_idle_conns": 128,
+      "max_idle_conns_per_host": 32,
       "idle_conn_timeout": "90s",
       "tls_handshake_timeout": "5s"
     }
@@ -62,12 +61,16 @@ Run with a JSON configuration file:
     "dial": "2s",
     "read": "3s"
   },
-  "rate_limit": {"max_in_flight": 2048},
+  "rate_limit": {"max_in_flight": 1024},
   "logging": {"level": "info"},
   "metrics": {"enabled": true},
   "prewarm_pools": true
 }
 ```
+
+> **Cold start tip:** enabling `prewarm_pools` primes DoT/DoQ connections during startup. If prewarming cannot complete (e.g.,
+> due to firewalls or ALPN mismatches), the first live query may spend extra time establishing connections before reusing pool
+> state for subsequent lookups.
 
 ### Notes on architecture changes
 - **DoH transport reuse:** a single tuned `http.Client` backs all DoH requests to preserve keep-alives.

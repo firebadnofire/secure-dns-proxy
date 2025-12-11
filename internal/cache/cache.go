@@ -106,7 +106,7 @@ func (c *Cache) ttlForMessage(msg *dns.Msg) (time.Duration, bool) {
 
 	var ttlSeconds uint32
 	if negative {
-		ttlSeconds = uint32(c.cfg.NegativeTTL.Seconds())
+		ttlSeconds = uint32(c.cfg.NegativeTTL.Duration().Seconds())
 		for _, ns := range msg.Ns {
 			if soa, ok := ns.(*dns.SOA); ok {
 				ttlSeconds = soa.Minttl
@@ -114,7 +114,7 @@ func (c *Cache) ttlForMessage(msg *dns.Msg) (time.Duration, bool) {
 			}
 		}
 	} else {
-		ttlSeconds = uint32(c.cfg.DefaultTTL.Seconds())
+		ttlSeconds = uint32(c.cfg.DefaultTTL.Duration().Seconds())
 		if c.cfg.RespectRecordTTL {
 			ttlSeconds = minTTL(msg.Answer)
 		}
