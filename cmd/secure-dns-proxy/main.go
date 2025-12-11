@@ -43,11 +43,30 @@ func main() {
 	res := resolver.New(cfg, mgr, log, metricsSink)
 	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log, metricsSink)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	reloadCh := make(chan os.Signal, 1)
+	signal.Notify(reloadCh, syscall.SIGHUP)
 	defer stop()
 
 	if cfg.HealthChecks.Enabled {
 		mgr.StartHealthChecks(ctx)
 	}
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reloadCh:
+				reloadCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := srv.Rebind(reloadCtx); err != nil {
+					log.Warn("reload failed", "error", err)
+				} else {
+					log.Info("reloaded listeners after SIGHUP")
+				}
+				cancel()
+			}
+		}
+	}()
 
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start server: %v\n", err)

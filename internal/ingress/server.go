@@ -19,9 +19,12 @@ import (
 type Server struct {
 	udp     *dns.Server
 	tcp     *dns.Server
+	handler dns.Handler
 	res     *resolver.Resolver
 	log     logging.Logger
 	metrics *metrics.Metrics
+	addr    string
+	port    int
 
 	requestCount atomic.Uint64
 	trafficIn    atomic.Uint64
@@ -31,14 +34,14 @@ type Server struct {
 // New constructs a DNS ingress server bound to address:port.
 func New(bindAddr string, port int, res *resolver.Resolver, log logging.Logger, metrics *metrics.Metrics) *Server {
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(port))
-	s := &Server{res: res, log: log, metrics: metrics}
+	s := &Server{res: res, log: log, metrics: metrics, addr: bindAddr, port: port}
 
-	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+	s.handler = dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 		s.handle(context.Background(), w, r)
 	})
 
-	s.udp = &dns.Server{Addr: addr, Net: "udp", Handler: handler, ReusePort: true, UDPSize: dns.DefaultMsgSize}
-	s.tcp = &dns.Server{Addr: addr, Net: "tcp", Handler: handler, ReusePort: true}
+	s.udp = &dns.Server{Addr: addr, Net: "udp", Handler: s.handler, ReusePort: true, UDPSize: dns.DefaultMsgSize}
+	s.tcp = &dns.Server{Addr: addr, Net: "tcp", Handler: s.handler, ReusePort: true}
 	return s
 }
 
@@ -74,6 +77,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// Rebind tears down listeners and rebinds to the configured address without
+// dropping in-memory state like caches.
+func (s *Server) Rebind(ctx context.Context) error {
+	if err := s.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	addr := net.JoinHostPort(s.addr, strconv.Itoa(s.port))
+	s.udp = &dns.Server{Addr: addr, Net: "udp", Handler: s.handler, ReusePort: true, UDPSize: dns.DefaultMsgSize}
+	s.tcp = &dns.Server{Addr: addr, Net: "tcp", Handler: s.handler, ReusePort: true}
+	return s.Start()
 }
 
 func (s *Server) handle(ctx context.Context, w dns.ResponseWriter, req *dns.Msg) {
