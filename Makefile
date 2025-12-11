@@ -25,7 +25,7 @@ INSTALL ?= install
 SYSTEMD_SERVICE := packaging/systemd/$(PREFIX).service
 SYSCTL_CONF     := packaging/sysctl/$(PREFIX).conf
 
-.PHONY: all clean stage package install uninstall deinstall
+.PHONY: all clean stage package install upgrade uninstall deinstall
 
 all: package
 
@@ -53,7 +53,7 @@ stage: $(BIN_STG) $(CONF_STG)
 $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz: stage
 	mkdir -p $(DISTDIR)
 	tar -czf $@ \
-	  -C $(STAGEDIR) $(PREFIX)
+	-C $(STAGEDIR) $(PREFIX)
 
 package: $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz
 
@@ -75,6 +75,14 @@ install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
 	$(INSTALL) -d $(DESTDIR)$(SYSCTL_DIR)
 	$(INSTALL) -m 0644 $(SYSCTL_CONF) $(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf
 	[ -z "$(DESTDIR)" ] && sysctl -q -w net.core.rmem_max=8388608 net.core.rmem_default=8388608 || true
+
+.PHONY: upgrade
+upgrade: $(BUILD_BIN)
+	$(INSTALL) -d $(DESTDIR)$(INSTALL_PREFIX)/bin
+	$(INSTALL) -m 0755 $(BUILD_BIN) $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX)
+	command -v setcap >/dev/null 2>&1 && \
+	setcap 'cap_net_bind_service=+ep' $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX) || \
+	echo "setcap not available; ensure the binary can bind to privileged ports"
 
 .PHONY: uninstall deinstall
 uninstall deinstall:
