@@ -66,7 +66,7 @@ func recordFailure(recordHealth bool, err error, record func(error)) {
 	if !recordHealth || err == nil {
 		return
 	}
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
 	record(err)
