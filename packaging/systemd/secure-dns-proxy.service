@@ -1,0 +1,18 @@
+[Unit]
+Description=secure-dns-proxy service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ExecStart=/usr/local/bin/secure-dns-proxy --config /etc/secure-dns-proxy/config.json
+Restart=on-failure
+RuntimeDirectory=secure-dns-proxy
+RuntimeDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

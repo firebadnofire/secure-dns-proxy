@@ -26,6 +26,20 @@ Run with a JSON configuration file:
 ./secure-dns-proxy --config config.example.json
 ```
 
+## Installation
+
+Use the provided Makefile to install the binary, example configuration, systemd service unit, and sysctl tuning for QUIC UDP buffers:
+
+```sh
+sudo make install
+```
+
+By default this places the binary in `/usr/local/bin`, an example config in `/etc/secure-dns-proxy/config.example.json`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. To run the service, create `/etc/secure-dns-proxy/config.json` with your settings and enable/start the unit:
+
+```sh
+sudo systemctl enable --now secure-dns-proxy.service
+```
+
 ### Example configuration (config.example.json)
 ```json
 {
@@ -81,9 +95,6 @@ Run with a JSON configuration file:
 - **Health & policy:** upstreams track failures and back off; round-robin, sequential, and race policies balance resiliency and latency.
 - **Backpressure:** a limiter caps concurrent upstream work to prevent dial storms during spikes.
 - **Logging:** only state changes and errors are logged; verbosity is configurable.
-
-## Scaling toward dnsdist-class deployments
-`secure-dns-proxy` is optimized for a single high-performance stub process. Achieving dnsdist-level scale for large enterprise networks requires additional engineering such as kernel-bypass ingress, richer health probing, latency-aware load balancing, and distributed caching. See [`docs/SCALING.md`](docs/SCALING.md) for a roadmap and configuration guidance for load-balanced upstreams.
 
 ## License
 GNU Affero General Public License v3.0
