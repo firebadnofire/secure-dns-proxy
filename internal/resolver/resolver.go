@@ -86,6 +86,11 @@ func (r *Resolver) Resolve(ctx context.Context, req *dns.Msg) (*dns.Msg, bool, e
 		defer cancel()
 
 		resp, err := r.upstream.Resolve(ctx, req)
+		if errors.Is(err, upstream.ErrNoHealthyUpstreams) {
+			r.log.Warn("no healthy upstreams, resetting pools and retrying")
+			r.upstream.Reset()
+			resp, err = r.upstream.Resolve(ctx, req)
+		}
 		return resp, err
 	}
 

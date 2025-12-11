@@ -145,7 +145,7 @@ func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 		}
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("no healthy upstreams")
+		lastErr = ErrNoHealthyUpstreams
 	}
 	return nil, lastErr
 }
@@ -172,7 +172,7 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 			m.metrics.RecordFailure()
 		}
 	}
-	return nil, fmt.Errorf("no healthy upstreams")
+	return nil, ErrNoHealthyUpstreams
 }
 
 func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
