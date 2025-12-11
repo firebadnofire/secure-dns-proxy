@@ -20,10 +20,12 @@ DEFAULT_CONF := config.default.json
 INSTALL_PREFIX ?= /usr/local
 SYSTEMD_UNIT_DIR ?= /etc/systemd/system
 SYSCTL_DIR ?= /etc/sysctl.d
+NM_DISPATCH_DIR ?= /etc/NetworkManager/dispatcher.d
 INSTALL ?= install
 
 SYSTEMD_SERVICE := packaging/systemd/$(PREFIX).service
 SYSCTL_CONF     := packaging/sysctl/$(PREFIX).conf
+NM_DISPATCHER   := packaging/systemd/$(PREFIX)-nm-dispatcher.sh
 
 .PHONY: all clean stage package install upgrade uninstall deinstall
 
@@ -58,7 +60,7 @@ $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz: stage
 package: $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz
 
 # install binary, config example, sysctl tuning, and systemd unit
-install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
+install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF) $(NM_DISPATCHER)
 	getent group $(PREFIX) >/dev/null 2>&1 || groupadd -r $(PREFIX)
 	id -u $(PREFIX) >/dev/null 2>&1 || \
 	useradd -r -g $(PREFIX) -s /usr/sbin/nologin -d /nonexistent -M $(PREFIX)
@@ -74,6 +76,11 @@ install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
 	$(INSTALL) -m 0644 $(SYSTEMD_SERVICE) $(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	$(INSTALL) -d $(DESTDIR)$(SYSCTL_DIR)
 	$(INSTALL) -m 0644 $(SYSCTL_CONF) $(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf
+	# Install optional NetworkManager dispatcher hook to reload on connectivity changes
+	if [ -n "$(NM_DISPATCH_DIR)" ]; then \
+	$(INSTALL) -d $(DESTDIR)$(NM_DISPATCH_DIR); \
+	$(INSTALL) -m 0755 $(NM_DISPATCHER) $(DESTDIR)$(NM_DISPATCH_DIR)/90-$(PREFIX).sh; \
+	fi
 	[ -z "$(DESTDIR)" ] && sysctl -q -w net.core.rmem_max=8388608 net.core.rmem_default=8388608 || true
 
 .PHONY: upgrade
