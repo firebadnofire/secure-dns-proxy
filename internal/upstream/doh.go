@@ -13,13 +13,14 @@ import (
 )
 
 type DoH struct {
-	url    string
-	client *http.Client
-	health healthState
+	url          string
+	client       *http.Client
+	health       healthState
+	trackTraffic bool
 }
 
-func NewDoH(cfg config.UpstreamConfig, client *http.Client) *DoH {
-	return &DoH{url: cfg.URL, client: client, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration())}
+func NewDoH(cfg config.UpstreamConfig, client *http.Client, trackTraffic bool) *DoH {
+	return &DoH{url: cfg.URL, client: client, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic}
 }
 
 func (d *DoH) ID() string { return d.url }
@@ -34,6 +35,15 @@ func (d *DoH) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if !d.Healthy() {
 		return nil, ErrCircuitOpen
 	}
+	return d.doExchange(ctx, msg, d.trackTraffic)
+}
+
+func (d *DoH) Probe(ctx context.Context, msg *dns.Msg) error {
+	_, err := d.doExchange(ctx, msg, true)
+	return err
+}
+
+func (d *DoH) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (*dns.Msg, error) {
 	payload, err := msg.Pack()
 	if err != nil {
 		return nil, err
@@ -47,26 +57,36 @@ func (d *DoH) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode/100 != 2 {
-		d.RecordFailure(fmt.Errorf("http status %d", resp.StatusCode))
+		if recordHealth {
+			d.RecordFailure(fmt.Errorf("http status %d", resp.StatusCode))
+		}
 		return nil, fmt.Errorf("doh upstream returned %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
 	dnsResp := new(dns.Msg)
 	if err := dnsResp.Unpack(body); err != nil {
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
-	d.RecordSuccess()
+	if recordHealth {
+		d.RecordSuccess()
+	}
 	return dnsResp, nil
 }
