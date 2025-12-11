@@ -9,7 +9,7 @@
 - Shared HTTP transport for DoH keep-alives
 - Positive and negative TTL caching with request coalescing
 - Rate limiting/backpressure to cap concurrent upstream work
-- Circuit-breaker style upstream health tracking
+- Circuit-breaker style upstream health tracking with optional active probes
 - Structured logging and lightweight internal metrics hooks
 - EDNS0 support with sane defaults
 
@@ -90,7 +90,12 @@ sudo make deinstall
   "rate_limit": {"max_in_flight": 1024},
   "logging": {"level": "info"},
   "metrics": {"enabled": true},
-  "prewarm_pools": true
+  "prewarm_pools": true,
+  "health_checks": {
+    "enabled": false,
+    "interval": "10s",
+    "query": "example.com."
+  }
 }
 ```
 
@@ -104,7 +109,7 @@ sudo make deinstall
 - **DoQ correctness:** requests close the write side only after sending, then read the response before closing the stream.
 - **Timeout hygiene:** timeouts are enforced via contexts without leaking deadlines onto pooled connections.
 - **Caching & coalescing:** identical in-flight queries collapse to one upstream call; responses populate positive/negative TTL caches per RFC 2308.
-- **Health & policy:** upstreams track failures and back off; round-robin, sequential, and race policies balance resiliency and latency.
+- **Health & policy:** upstreams track failures and back off; optional active probes keep health independent of live queries; round-robin, sequential, and race policies balance resiliency and latency.
 - **Backpressure:** a limiter caps concurrent upstream work to prevent dial storms during spikes.
 - **Logging:** only state changes and errors are logged; verbosity is configurable.
 

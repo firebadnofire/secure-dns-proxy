@@ -16,14 +16,15 @@ import (
 )
 
 type DoQ struct {
-	address string
-	pool    *pool.QUICConnPool
-	tlsConf *tls.Config
-	health  healthState
+	address      string
+	pool         *pool.QUICConnPool
+	tlsConf      *tls.Config
+	health       healthState
+	trackTraffic bool
 }
 
-func NewDoQ(cfg config.UpstreamConfig, pool *pool.QUICConnPool, tlsConf *tls.Config) *DoQ {
-	return &DoQ{address: cfg.URL, pool: pool, tlsConf: tlsConf, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration())}
+func NewDoQ(cfg config.UpstreamConfig, pool *pool.QUICConnPool, tlsConf *tls.Config, trackTraffic bool) *DoQ {
+	return &DoQ{address: cfg.URL, pool: pool, tlsConf: tlsConf, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic}
 }
 
 func (d *DoQ) ID() string { return d.address }
@@ -38,9 +39,20 @@ func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if !d.Healthy() {
 		return nil, ErrCircuitOpen
 	}
+	return d.doExchange(ctx, msg, d.trackTraffic)
+}
+
+func (d *DoQ) Probe(ctx context.Context, msg *dns.Msg) error {
+	_, err := d.doExchange(ctx, msg, true)
+	return err
+}
+
+func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (*dns.Msg, error) {
 	session, release, err := d.pool.Acquire(ctx)
 	if err != nil {
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
 	releaseOnce := func(e error) {
@@ -54,7 +66,9 @@ func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	stream, err := session.OpenStreamSync(ctx)
 	if err != nil {
 		releaseOnce(err)
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
 
@@ -66,29 +80,39 @@ func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if _, err := stream.Write(payload); err != nil {
 		stream.CancelWrite(0)
 		releaseOnce(err)
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
 	if err := stream.Close(); err != nil {
 		stream.CancelWrite(0)
 		releaseOnce(err)
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
 
 	respBuf, err := io.ReadAll(stream)
 	releaseOnce(err)
 	if err != nil {
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
 
 	response := new(dns.Msg)
 	if err := response.Unpack(respBuf); err != nil {
-		d.RecordFailure(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
 		return nil, err
 	}
-	d.RecordSuccess()
+	if recordHealth {
+		d.RecordSuccess()
+	}
 	return response, nil
 }
 

@@ -12,11 +12,12 @@ var ErrCircuitOpen = errors.New("upstream temporarily unavailable")
 
 // Upstream provides a unified interface for communicating with DNS upstreams.
 type Upstream interface {
-	ID() string
-	Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
-	Healthy() bool
-	RecordSuccess()
-	RecordFailure(err error)
+        ID() string
+        Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
+        Healthy() bool
+        Probe(ctx context.Context, msg *dns.Msg) error
+        RecordSuccess()
+        RecordFailure(err error)
 }
 
 type healthState struct {

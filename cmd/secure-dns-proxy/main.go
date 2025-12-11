@@ -42,15 +42,18 @@ func main() {
 
 	res := resolver.New(cfg, mgr, log, metricsSink)
 	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log, metricsSink)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.HealthChecks.Enabled {
+		mgr.StartHealthChecks(ctx)
+	}
 
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start server: %v\n", err)
 		os.Exit(1)
 	}
 	log.Info("secure-dns-proxy started", "addr", fmt.Sprintf("%s:%d", cfg.BindAddress, cfg.Port), "policy", cfg.UpstreamPolicy)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

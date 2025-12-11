@@ -59,6 +59,8 @@ type Config struct {
 	UpstreamPolicy     string `json:"upstream_policy"`
 	UpstreamRaceFanout int    `json:"upstream_race_fanout"`
 
+	HealthChecks HealthCheckConfig `json:"health_checks"`
+
 	Cache        CacheConfig   `json:"cache"`
 	Pools        PoolConfig    `json:"pools"`
 	Timeouts     TimeoutConfig `json:"timeouts"`
@@ -75,6 +77,15 @@ type UpstreamConfig struct {
 	MaxFailures int      `json:"max_failures"`
 	Cooldown    Duration `json:"cooldown"`
 	Weight      int      `json:"weight"`
+}
+
+// HealthCheckConfig configures active health probing.
+// When enabled, upstream health state is driven by dedicated probes rather than
+// by regular query successes/failures.
+type HealthCheckConfig struct {
+	Enabled  bool     `json:"enabled"`
+	Interval Duration `json:"interval"`
+	Query    string   `json:"query"`
 }
 
 // CacheConfig tunes the TTL cache behavior.
@@ -138,6 +149,11 @@ func Default() Config {
 		InsecureTLS:        false,
 		UpstreamPolicy:     "round_robin",
 		UpstreamRaceFanout: 2,
+		HealthChecks: HealthCheckConfig{
+			Enabled:  false,
+			Interval: Duration(10 * time.Second),
+			Query:    "example.com.",
+		},
 		Cache: CacheConfig{
 			Enabled:          true,
 			Capacity:         2048,

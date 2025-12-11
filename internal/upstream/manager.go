@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/miekg/dns"
 
@@ -26,6 +27,9 @@ type Manager struct {
 	log       logging.Logger
 	metrics   *metrics.Metrics
 	rrCounter atomic.Uint64
+
+	healthCfg       config.HealthCheckConfig
+	upstreamTimeout time.Duration
 }
 
 // BuildManager constructs upstream clients and pools from config.
@@ -41,10 +45,12 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
 	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
 
-	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics}
+	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics, healthCfg: cfg.HealthChecks, upstreamTimeout: cfg.Timeouts.Upstream.Duration()}
+
+	trackTraffic := !cfg.HealthChecks.Enabled
 
 	for _, upCfg := range cfg.Upstreams {
-		u, err := buildUpstream(upCfg, cfg, httpClient, dialer, tlsConfig, log, metrics)
+		u, err := buildUpstream(upCfg, cfg, httpClient, dialer, tlsConfig, log, metrics, trackTraffic)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -54,7 +60,7 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 	return mgr, httpClient, nil
 }
 
-func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *http.Client, dialer *net.Dialer, tlsConf *tls.Config, log logging.Logger, metrics *metrics.Metrics) (Upstream, error) {
+func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *http.Client, dialer *net.Dialer, tlsConf *tls.Config, log logging.Logger, metrics *metrics.Metrics, trackTraffic bool) (Upstream, error) {
 	target := upCfg.URL
 	if !strings.Contains(target, "://") {
 		target = "dns://" + target
@@ -69,9 +75,9 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "53")
 		}
-		return NewPlainDNS(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, cfg.Timeouts.Upstream.Duration()), nil
+		return NewPlainDNS(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, cfg.Timeouts.Upstream.Duration(), trackTraffic), nil
 	case "https":
-		return NewDoH(upCfg, httpClient), nil
+		return NewDoH(upCfg, httpClient, trackTraffic), nil
 	case "tls":
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
@@ -82,7 +88,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if cfg.PrewarmPools {
 			go tlsPool.Prewarm(context.Background())
 		}
-		return NewDoT(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, tlsPool), nil
+		return NewDoT(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, tlsPool, trackTraffic), nil
 	case "quic":
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
@@ -102,7 +108,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if cfg.PrewarmPools {
 			go quicPool.Prewarm(context.Background())
 		}
-		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS), nil
+		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS, trackTraffic), nil
 	default:
 		return nil, fmt.Errorf("unsupported scheme %s", parsed.Scheme)
 	}
@@ -221,16 +227,67 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	return nil, lastErr
 }
 
+// StartHealthChecks periodically probes upstreams without relying on request traffic.
+func (m *Manager) StartHealthChecks(ctx context.Context) {
+	if !m.healthCfg.Enabled {
+		return
+	}
+	interval := m.healthCfg.Interval.Duration()
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	query := m.healthCfg.Query
+	if query == "" {
+		query = "example.com."
+	}
+	tmpl := new(dns.Msg)
+	tmpl.SetQuestion(dns.Fqdn(query), dns.TypeA)
+
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				m.dispatchHealthChecks(ctx, tmpl)
+			}
+		}
+	}()
+}
+
+func (m *Manager) dispatchHealthChecks(ctx context.Context, tmpl *dns.Msg) {
+	for _, up := range m.upstreams {
+		probe := tmpl.Copy()
+		if probe == nil {
+			probe = tmpl
+		}
+		probeCtx := ctx
+		var cancel context.CancelFunc
+		if m.upstreamTimeout > 0 {
+			probeCtx, cancel = context.WithTimeout(ctx, m.upstreamTimeout)
+		}
+		go func(u Upstream, c context.CancelFunc, msg *dns.Msg, pctx context.Context) {
+			if c != nil {
+				defer c()
+			}
+			if err := u.Probe(pctx, msg); err != nil && m.log != nil {
+				m.log.Debug("upstream health probe failed", "upstream", u.ID(), "error", err)
+			}
+		}(up, cancel, probe, probeCtx)
+	}
+}
+
 // DoHealthProbe checks upstream liveness without altering metrics.
 func (m *Manager) DoHealthProbe(ctx context.Context, msg *dns.Msg) []error {
 	errs := make([]error, len(m.upstreams))
 	for i, up := range m.upstreams {
-		if !up.Healthy() {
-			errs[i] = ErrCircuitOpen
-			continue
+		probe := msg.Copy()
+		if probe == nil {
+			probe = msg
 		}
-		_, err := up.Exchange(ctx, msg)
-		errs[i] = err
+		errs[i] = up.Probe(ctx, probe)
 	}
 	return errs
 }

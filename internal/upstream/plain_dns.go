@@ -12,13 +12,14 @@ import (
 )
 
 type PlainDNS struct {
-	address string
-	timeout time.Duration
-	health  healthState
+	address      string
+	timeout      time.Duration
+	health       healthState
+	trackTraffic bool
 }
 
-func NewPlainDNS(cfg config.UpstreamConfig, timeout time.Duration) *PlainDNS {
-	return &PlainDNS{address: cfg.URL, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration())}
+func NewPlainDNS(cfg config.UpstreamConfig, timeout time.Duration, trackTraffic bool) *PlainDNS {
+	return &PlainDNS{address: cfg.URL, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic}
 }
 
 func (p *PlainDNS) ID() string { return fmt.Sprintf("dns://%s", p.address) }
@@ -33,6 +34,15 @@ func (p *PlainDNS) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
 	if !p.Healthy() {
 		return nil, ErrCircuitOpen
 	}
+	return p.doExchange(ctx, msg, p.trackTraffic)
+}
+
+func (p *PlainDNS) Probe(ctx context.Context, msg *dns.Msg) error {
+	_, err := p.doExchange(ctx, msg, true)
+	return err
+}
+
+func (p *PlainDNS) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (*dns.Msg, error) {
 	c := &dns.Client{Net: "udp", Timeout: p.timeout}
 	resp, rtt, err := c.ExchangeContext(ctx, msg, p.address)
 	_ = rtt
@@ -42,10 +52,14 @@ func (p *PlainDNS) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
 		_ = rtt
 	}
 	if err != nil {
-		p.RecordFailure(err)
+		if recordHealth {
+			p.RecordFailure(err)
+		}
 		return nil, err
 	}
-	p.RecordSuccess()
+	if recordHealth {
+		p.RecordSuccess()
+	}
 	return resp, nil
 }
 

@@ -34,5 +34,10 @@
   "rate_limit": {"max_in_flight": 1024},
   "logging": {"level": "info"},
   "metrics": {"enabled": true},
-  "prewarm_pools": true
+  "prewarm_pools": true,
+  "health_checks": {
+    "enabled": false,
+    "interval": "10s",
+    "query": "example.com."
+  }
 }
