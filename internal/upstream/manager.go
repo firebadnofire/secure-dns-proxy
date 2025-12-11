@@ -187,15 +187,24 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 		resp *dns.Msg
 		err  error
 	}
-	resCh := make(chan result, fanout)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	selected := make([]Upstream, 0, fanout)
 	for i := 0; i < fanout; i++ {
 		up := m.upstreams[(int(m.rrCounter.Add(1))+i)%len(m.upstreams)]
-		if !up.Healthy() {
-			continue
+		if up.Healthy() {
+			selected = append(selected, up)
 		}
+	}
+
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("no healthy upstreams")
+	}
+
+	resCh := make(chan result, len(selected))
+
+	for _, up := range selected {
 		go func(u Upstream) {
 			resp, err := u.Exchange(ctx, msg)
 			resCh <- result{resp: resp, err: err}
@@ -203,7 +212,7 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	}
 
 	var lastErr error
-	for i := 0; i < fanout; i++ {
+	for i := 0; i < len(selected); i++ {
 		select {
 		case r := <-resCh:
 			if r.err == nil && r.resp != nil {
