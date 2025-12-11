@@ -28,16 +28,24 @@ Run with a JSON configuration file:
 
 ## Installation
 
-Use the provided Makefile to install the binary, example configuration, systemd service unit, and sysctl tuning for QUIC UDP buffers:
+Use the provided Makefile to install the binary, default/example configuration, systemd service unit, and sysctl tuning for QUIC UDP buffers:
 
 ```sh
 sudo make install
 ```
 
-By default this places the binary in `/usr/local/bin`, an example config in `/etc/secure-dns-proxy/config.example.json`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. To run the service, create `/etc/secure-dns-proxy/config.json` with your settings and enable/start the unit:
+By default this places the binary in `/usr/local/bin`, a runnable config in `/etc/secure-dns-proxy/config.json`, an example config at `/etc/secure-dns-proxy/config.example.json`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. Enable/start the unit after installation:
 
 ```sh
 sudo systemctl enable --now secure-dns-proxy.service
+```
+
+To remove the installation, use either target:
+
+```sh
+sudo make uninstall
+# or
+sudo make deinstall
 ```
 
 ### Example configuration (config.example.json)

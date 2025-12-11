@@ -14,6 +14,7 @@ CONF_STG    := $(STAGEDIR)/$(PREFIX)/etc/$(PREFIX)
 
 # source config
 EXAMPLE_CONF := config.example.json
+DEFAULT_CONF := config.default.json
 
 # install paths
 INSTALL_PREFIX ?= /usr/local
@@ -24,7 +25,7 @@ INSTALL ?= install
 SYSTEMD_SERVICE := packaging/systemd/$(PREFIX).service
 SYSCTL_CONF     := packaging/sysctl/$(PREFIX).conf
 
-.PHONY: all clean stage package install
+.PHONY: all clean stage package install uninstall deinstall
 
 all: package
 
@@ -42,6 +43,7 @@ $(BIN_STG): $(BUILD_BIN)
 $(CONF_STG):
 	mkdir -p $@
 	cp $(EXAMPLE_CONF) $(CONF_STG)/config.example.json
+	cp $(DEFAULT_CONF) $(CONF_STG)/config.json
 
 # 3) assemble the staging tree
 stage: $(BIN_STG) $(CONF_STG)
@@ -51,7 +53,7 @@ stage: $(BIN_STG) $(CONF_STG)
 $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz: stage
 	mkdir -p $(DISTDIR)
 	tar -czf $@ \
-  -C $(STAGEDIR) $(PREFIX)
+	  -C $(STAGEDIR) $(PREFIX)
 
 package: $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz
 
@@ -64,11 +66,20 @@ install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
 	echo "setcap not available; ensure the binary can bind to privileged ports"
 	$(INSTALL) -d $(DESTDIR)/etc/$(PREFIX)
 	$(INSTALL) -m 0644 $(EXAMPLE_CONF) $(DESTDIR)/etc/$(PREFIX)/config.example.json
+	[ -f $(DESTDIR)/etc/$(PREFIX)/config.json ] || $(INSTALL) -m 0644 $(DEFAULT_CONF) $(DESTDIR)/etc/$(PREFIX)/config.json
 	$(INSTALL) -d $(DESTDIR)$(SYSTEMD_UNIT_DIR)
 	$(INSTALL) -m 0644 $(SYSTEMD_SERVICE) $(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	$(INSTALL) -d $(DESTDIR)$(SYSCTL_DIR)
 	$(INSTALL) -m 0644 $(SYSCTL_CONF) $(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf
 	[ -z "$(DESTDIR)" ] && sysctl -q -w net.core.rmem_max=2500000 net.core.rmem_default=2500000 || true
+
+.PHONY: uninstall deinstall
+uninstall deinstall:
+	rm -f $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX)
+	rm -f $(DESTDIR)/etc/$(PREFIX)/config.json $(DESTDIR)/etc/$(PREFIX)/config.example.json
+	rmdir --ignore-fail-on-non-empty $(DESTDIR)/etc/$(PREFIX) 2>/dev/null || true
+	rm -f $(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service
+	rm -f $(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf
 
 # cleanup everything
 clean:
