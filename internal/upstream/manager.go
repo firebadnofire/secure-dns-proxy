@@ -88,12 +88,21 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "784")
 		}
-		factory := MakeQUICFactory(addr, tlsConf, dialer)
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid quic upstream %s: %w", target, err)
+		}
+		quicTLS := tlsConf.Clone()
+		quicTLS.NextProtos = []string{"doq"}
+		if quicTLS.ServerName == "" {
+			quicTLS.ServerName = host
+		}
+		factory := MakeQUICFactory(addr, quicTLS, dialer)
 		quicPool := pool.NewQUICConnPool(cfg.Pools.QUIC.Size, cfg.Pools.QUIC.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go quicPool.Prewarm(context.Background())
 		}
-		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, tlsConf), nil
+		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS), nil
 	default:
 		return nil, fmt.Errorf("unsupported scheme %s", parsed.Scheme)
 	}
