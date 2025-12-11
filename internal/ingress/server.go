@@ -94,15 +94,21 @@ func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
 	answers := 0
 	authorities := 0
 	extra := 0
+	rcode := "UNKNOWN"
 	if resp != nil {
 		answers = len(resp.Answer)
 		authorities = len(resp.Ns)
 		extra = len(resp.Extra)
+		rcode = dns.RcodeToString[resp.Rcode]
 	}
 
 	if len(req.Question) > 0 {
 		q := req.Question[0]
-		s.log.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype], "class", dns.ClassToString[q.Qclass], "rcode", dns.RcodeToString[resp.Rcode], "cache_hit", cacheHit, "answer_records", answers, "authority_records", authorities, "extra_records", extra, "queries_total", totalQueries)
+		args := []any{"name", q.Name, "type", dns.TypeToString[q.Qtype], "class", dns.ClassToString[q.Qclass], "rcode", rcode, "cache_hit", cacheHit, "answer_records", answers, "authority_records", authorities, "extra_records", extra}
+		if s.metrics != nil {
+			args = append(args, "queries_total", totalQueries)
+		}
+		s.log.Info("query", args...)
 	}
 
 	if s.metrics == nil {
@@ -110,7 +116,10 @@ func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
 	}
 
 	reqSize := uint64(req.Len())
-	respSize := uint64(resp.Len())
+	respSize := uint64(0)
+	if resp != nil {
+		respSize = uint64(resp.Len())
+	}
 	inTotal, outTotal := s.metrics.AddTraffic(reqSize, respSize)
 
 	s.log.Info("cumulative traffic", "in_bytes", inTotal, "in_mib", fmt.Sprintf("%.3f", bytesToMiB(inTotal)), "in_gib", fmt.Sprintf("%.3f", bytesToGiB(inTotal)), "out_bytes", outTotal, "out_mib", fmt.Sprintf("%.3f", bytesToMiB(outTotal)), "out_gib", fmt.Sprintf("%.3f", bytesToGiB(outTotal)))

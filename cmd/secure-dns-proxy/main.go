@@ -29,7 +29,10 @@ func main() {
 	}
 
 	log := logging.New(logging.Level(cfg.Logging.Level))
-	metricsSink := &metrics.Metrics{}
+	var metricsSink *metrics.Metrics
+	if cfg.Metrics.Enabled {
+		metricsSink = &metrics.Metrics{}
+	}
 
 	mgr, _, err := upstream.BuildManager(cfg, log, metricsSink)
 	if err != nil {
