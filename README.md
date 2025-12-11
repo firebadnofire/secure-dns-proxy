@@ -34,7 +34,9 @@ Use the provided Makefile to install the binary, default/example configuration, 
 sudo make install
 ```
 
-By default this places the binary in `/usr/local/bin`, a runnable config in `/etc/secure-dns-proxy/config.json`, an example config at `/etc/secure-dns-proxy/config.example.json`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. Enable/start the unit after installation:
+By default this places the binary in `/usr/local/bin`, a runnable config in `/etc/secure-dns-proxy/config.json`, an example config at `/etc/secure-dns-proxy/config.example.json`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. The installer also creates a dedicated `secure-dns-proxy` system user/group and owns the runnable config and `/etc/secure-dns-proxy` directory to that account.
+
+Enable/start the unit after installation:
 
 ```sh
 sudo systemctl enable --now secure-dns-proxy.service
@@ -42,7 +44,7 @@ sudo systemctl enable --now secure-dns-proxy.service
 
 The service unit requests `CAP_NET_BIND_SERVICE` and `CAP_NET_ADMIN`, allows unlimited memlock, and ships a sysctl drop-in that raises `net.core.rmem_max`/`net.core.rmem_default` to 8 MiB to satisfy QUIC receive buffer sizing guidance. If you prefer different values, adjust `/etc/sysctl.d/80-secure-dns-proxy.conf` and reload via `sudo sysctl --system`.
 
-To remove the installation, use either target:
+To remove the installation (binary, configs, unit, sysctl drop-in, and service account), use either target:
 
 ```sh
 sudo make uninstall
