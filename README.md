@@ -26,6 +26,32 @@ Run with a JSON configuration file:
 ./secure-dns-proxy --config config.example.json
 ```
 
+## Installation
+
+Use the provided Makefile to install the binary, default/example configuration, systemd service unit, and sysctl tuning for QUIC UDP buffers:
+
+```sh
+sudo make install
+```
+
+By default this places the binary in `/usr/local/bin`, a runnable config in `/etc/secure-dns-proxy/config.json`, an example config at `/etc/secure-dns-proxy/config.example.json`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. The installer also creates a dedicated `secure-dns-proxy` system user/group and owns the runnable config and `/etc/secure-dns-proxy` directory to that account.
+
+Enable/start the unit after installation:
+
+```sh
+sudo systemctl enable --now secure-dns-proxy.service
+```
+
+The service unit requests `CAP_NET_BIND_SERVICE` and `CAP_NET_ADMIN`, allows unlimited memlock, and ships a sysctl drop-in that raises `net.core.rmem_max`/`net.core.rmem_default` to 8 MiB to satisfy QUIC receive buffer sizing guidance. If you prefer different values, adjust `/etc/sysctl.d/80-secure-dns-proxy.conf` and reload via `sudo sysctl --system`.
+
+To remove the installation (binary, configs, unit, sysctl drop-in, and service account), use either target:
+
+```sh
+sudo make uninstall
+# or
+sudo make deinstall
+```
+
 ### Example configuration (config.example.json)
 ```json
 {
@@ -81,9 +107,6 @@ Run with a JSON configuration file:
 - **Health & policy:** upstreams track failures and back off; round-robin, sequential, and race policies balance resiliency and latency.
 - **Backpressure:** a limiter caps concurrent upstream work to prevent dial storms during spikes.
 - **Logging:** only state changes and errors are logged; verbosity is configurable.
-
-## Scaling toward dnsdist-class deployments
-`secure-dns-proxy` is optimized for a single high-performance stub process. Achieving dnsdist-level scale for large enterprise networks requires additional engineering such as kernel-bypass ingress, richer health probing, latency-aware load balancing, and distributed caching. See [`docs/SCALING.md`](docs/SCALING.md) for a roadmap and configuration guidance for load-balanced upstreams.
 
 ## License
 GNU Affero General Public License v3.0
