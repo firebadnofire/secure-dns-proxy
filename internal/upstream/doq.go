@@ -72,6 +72,10 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		return nil, err
 	}
 
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = stream.SetDeadline(deadline)
+	}
+
 	payload, err := msg.Pack()
 	if err != nil {
 		releaseOnce(err)
