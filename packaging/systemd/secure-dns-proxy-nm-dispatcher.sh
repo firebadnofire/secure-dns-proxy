@@ -4,7 +4,7 @@
 SERVICE=secure-dns-proxy.service
 
 case "$2" in
-  up|down|dhcp-change|vpn-up|vpn-down)
+  up|down|pre-up|pre-down|dhcp4-change|dhcp6-change|vpn-up|vpn-down|hostname|connectivity-change)
     if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
       systemctl reload "$SERVICE"
     fi

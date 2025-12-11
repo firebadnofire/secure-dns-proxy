@@ -57,6 +57,7 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-reloadCh:
+				log.Info("received SIGHUP, rebinding listeners")
 				reloadCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				if err := srv.Rebind(reloadCtx); err != nil {
 					log.Warn("reload failed", "error", err)
