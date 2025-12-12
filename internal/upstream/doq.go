@@ -35,6 +35,13 @@ func (d *DoQ) RecordSuccess() { d.health.success() }
 
 func (d *DoQ) RecordFailure(err error) { d.health.failure() }
 
+func (d *DoQ) Reset() {
+	d.health.reset()
+	if d.pool != nil {
+		d.pool.Drain()
+	}
+}
+
 func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if !d.Healthy() {
 		return nil, ErrCircuitOpen

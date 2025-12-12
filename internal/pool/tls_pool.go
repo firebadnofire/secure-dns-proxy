@@ -101,3 +101,15 @@ func (p *TLSConnPool) tryStore(conn net.Conn) {
 		_ = conn.Close()
 	}
 }
+
+// Drain closes and discards all pooled connections.
+func (p *TLSConnPool) Drain() {
+	for {
+		select {
+		case pc := <-p.conns:
+			_ = pc.conn.Close()
+		default:
+			return
+		}
+	}
+}

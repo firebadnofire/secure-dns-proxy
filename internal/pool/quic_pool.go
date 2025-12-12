@@ -94,3 +94,15 @@ func (p *QUICConnPool) tryStore(conn quic.Connection) {
 		conn.CloseWithError(0, "overflow")
 	}
 }
+
+// Drain closes and discards all pooled QUIC sessions.
+func (p *QUICConnPool) Drain() {
+	for {
+		select {
+		case pc := <-p.conns:
+			pc.conn.CloseWithError(0, "drain")
+		default:
+			return
+		}
+	}
+}

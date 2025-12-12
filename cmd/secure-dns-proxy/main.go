@@ -48,6 +48,7 @@ func main() {
 	if cfg.HealthChecks.Enabled {
 		mgr.StartHealthChecks(ctx)
 	}
+	mgr.StartNetworkWatcher(ctx, 5*time.Second)
 
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start server: %v\n", err)

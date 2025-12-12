@@ -12,12 +12,21 @@ var ErrCircuitOpen = errors.New("upstream temporarily unavailable")
 
 // Upstream provides a unified interface for communicating with DNS upstreams.
 type Upstream interface {
-        ID() string
-        Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
-        Healthy() bool
-        Probe(ctx context.Context, msg *dns.Msg) error
-        RecordSuccess()
-        RecordFailure(err error)
+	ID() string
+	Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
+	Healthy() bool
+	Probe(ctx context.Context, msg *dns.Msg) error
+	RecordSuccess()
+	RecordFailure(err error)
+}
+
+// ResettableUpstream exposes a best-effort reset hook used when local network
+// connectivity changes. Implementers should clear cached state (connection
+// pools, idle transports) and reset health tracking so that fresh exchanges can
+// be established on the new network.
+type ResettableUpstream interface {
+	Upstream
+	Reset()
 }
 
 type healthState struct {
@@ -60,4 +69,9 @@ func (h *healthState) failure() {
 	if h.failures >= h.maxFailures {
 		h.backoffUntil = time.Now().Add(h.cooldown)
 	}
+}
+
+func (h *healthState) reset() {
+	h.failures = 0
+	h.backoffUntil = time.Time{}
 }

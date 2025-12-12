@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -39,11 +40,13 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 		MaxIdleConnsPerHost: cfg.Pools.HTTPTransport.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.Pools.HTTPTransport.IdleConnTimeout.Duration(),
 		TLSHandshakeTimeout: cfg.Pools.HTTPTransport.TLSHandshakeTimeout.Duration(),
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS},
 	}
+	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
+	transport.DialContext = dialer.DialContext
 	httpClient := &http.Client{Transport: transport}
 
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
-	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
 
 	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics, healthCfg: cfg.HealthChecks, upstreamTimeout: cfg.Timeouts.Upstream.Duration()}
 
@@ -290,4 +293,64 @@ func (m *Manager) DoHealthProbe(ctx context.Context, msg *dns.Msg) []error {
 		errs[i] = up.Probe(ctx, probe)
 	}
 	return errs
+}
+
+// ResetConnections clears reusable upstream state after a local network change.
+func (m *Manager) ResetConnections() {
+	for _, up := range m.upstreams {
+		if resettable, ok := up.(ResettableUpstream); ok {
+			resettable.Reset()
+		}
+	}
+}
+
+// StartNetworkWatcher polls network interface state and triggers upstream
+// resets when a change is detected. This mitigates stale pooled connections
+// after switching networks (e.g., Wi-Fi hopping).
+func (m *Manager) StartNetworkWatcher(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	baseline := networkFingerprint()
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				snapshot := networkFingerprint()
+				if snapshot != baseline {
+					baseline = snapshot
+					if m.log != nil {
+						m.log.Info("network change detected, resetting upstreams")
+					}
+					m.ResetConnections()
+				}
+			}
+		}
+	}()
+}
+
+func networkFingerprint() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	var entries []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil || len(addrs) == 0 {
+			continue
+		}
+		for _, addr := range addrs {
+			entries = append(entries, fmt.Sprintf("%s:%s", iface.Name, addr.String()))
+		}
+	}
+	sort.Strings(entries)
+	return strings.Join(entries, ";")
 }

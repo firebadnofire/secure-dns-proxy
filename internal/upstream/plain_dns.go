@@ -30,6 +30,10 @@ func (p *PlainDNS) RecordSuccess() { p.health.success() }
 
 func (p *PlainDNS) RecordFailure(err error) { p.health.failure() }
 
+func (p *PlainDNS) Reset() {
+	p.health.reset()
+}
+
 func (p *PlainDNS) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if !p.Healthy() {
 		return nil, ErrCircuitOpen

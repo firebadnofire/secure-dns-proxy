@@ -31,6 +31,13 @@ func (d *DoH) RecordSuccess() { d.health.success() }
 
 func (d *DoH) RecordFailure(err error) { d.health.failure() }
 
+func (d *DoH) Reset() {
+	d.health.reset()
+	if tr, ok := d.client.Transport.(interface{ CloseIdleConnections() }); ok {
+		tr.CloseIdleConnections()
+	}
+}
+
 func (d *DoH) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if !d.Healthy() {
 		return nil, ErrCircuitOpen

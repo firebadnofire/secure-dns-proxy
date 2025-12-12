@@ -7,6 +7,7 @@
 - Pluggable upstream selection: round-robin (default), sequential fallback, or parallel race fanout
 - Connection reuse pools for DoT and DoQ with optional pre-warming
 - Shared HTTP transport for DoH keep-alives
+- Automatic upstream reset on network changes (e.g., Wi-Fi hopping)
 - Positive and negative TTL caching with request coalescing
 - Rate limiting/backpressure to cap concurrent upstream work
 - Circuit-breaker style upstream health tracking with optional active probes
