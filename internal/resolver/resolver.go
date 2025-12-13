@@ -24,13 +24,16 @@ type Resolver struct {
 	timeout  time.Duration
 }
 
-func New(cfg config.Config, upstream *upstream.Manager, log logging.Logger, metrics *metrics.Metrics) *Resolver {
+func New(cfg config.Config, cacheInstance *cache.Cache, upstream *upstream.Manager, log logging.Logger, metrics *metrics.Metrics) *Resolver {
 	var limiter chan struct{}
 	if cfg.RateLimit.MaxInFlight > 0 {
 		limiter = make(chan struct{}, cfg.RateLimit.MaxInFlight)
 	}
+	if cacheInstance == nil {
+		cacheInstance = cache.New(cfg.Cache)
+	}
 	return &Resolver{
-		cache:    cache.New(cfg.Cache),
+		cache:    cacheInstance,
 		upstream: upstream,
 		metrics:  metrics,
 		limiter:  limiter,
