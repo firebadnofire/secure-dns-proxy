@@ -120,18 +120,35 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 }
 
 // Resolve forwards the query according to the configured policy.
+//
+// If all upstreams are unhealthy and a reset is triggered, the request is
+// retried once so callers don't need to issue a second query after a network
+// change.
 func (m *Manager) Resolve(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
-	switch m.policy {
-	case "sequential":
-		return m.sequential(ctx, msg)
-	case "race":
-		return m.race(ctx, msg)
-	default:
-		return m.roundRobin(ctx, msg)
+	for attempt := 0; attempt < 2; attempt++ {
+		var (
+			resp  *dns.Msg
+			err   error
+			retry bool
+		)
+
+		switch m.policy {
+		case "sequential":
+			resp, err, retry = m.sequential(ctx, msg)
+		case "race":
+			resp, err, retry = m.race(ctx, msg)
+		default:
+			resp, err, retry = m.roundRobin(ctx, msg)
+		}
+
+		if !retry {
+			return resp, err
+		}
 	}
+	return nil, fmt.Errorf("no healthy upstreams after reset")
 }
 
-func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error, bool) {
 	var lastErr error
 	for _, up := range m.upstreams {
 		if !up.Healthy() {
@@ -142,19 +159,20 @@ func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 			if m.metrics != nil {
 				m.metrics.RecordSuccess()
 			}
-			return resp, nil
+			return resp, nil, false
 		}
 		lastErr = err
 		if m.metrics != nil {
 			m.metrics.RecordFailure()
 		}
 	}
-	return nil, m.handleNoHealthy(lastErr)
+	err, retry := m.handleNoHealthy(lastErr)
+	return nil, err, retry
 }
 
-func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error, bool) {
 	if len(m.upstreams) == 0 {
-		return nil, fmt.Errorf("no upstreams configured")
+		return nil, fmt.Errorf("no upstreams configured"), false
 	}
 	start := int(m.rrCounter.Add(1) % uint64(len(m.upstreams)))
 	for i := 0; i < len(m.upstreams); i++ {
@@ -168,18 +186,19 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 			if m.metrics != nil {
 				m.metrics.RecordSuccess()
 			}
-			return resp, nil
+			return resp, nil, false
 		}
 		if m.metrics != nil {
 			m.metrics.RecordFailure()
 		}
 	}
-	return nil, m.handleNoHealthy(nil)
+	err, retry := m.handleNoHealthy(nil)
+	return nil, err, retry
 }
 
-func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error, bool) {
 	if len(m.upstreams) == 0 {
-		return nil, fmt.Errorf("no upstreams configured")
+		return nil, fmt.Errorf("no upstreams configured"), false
 	}
 	fanout := m.fanout
 	if fanout <= 0 || fanout > len(m.upstreams) {
@@ -213,20 +232,21 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 				if m.metrics != nil {
 					m.metrics.RecordSuccess()
 				}
-				return r.resp, nil
+				return r.resp, nil, false
 			}
 			lastErr = r.err
 			if m.metrics != nil {
 				m.metrics.RecordFailure()
 			}
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, ctx.Err(), false
 		}
 	}
-	return nil, m.handleNoHealthy(lastErr)
+	err, retry := m.handleNoHealthy(lastErr)
+	return nil, err, retry
 }
 
-func (m *Manager) handleNoHealthy(lastErr error) error {
+func (m *Manager) handleNoHealthy(lastErr error) (error, bool) {
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no healthy upstreams")
 	}
@@ -241,10 +261,11 @@ func (m *Manager) handleNoHealthy(lastErr error) error {
 				m.log.Info("all upstreams unhealthy, resetting pooled connections")
 			}
 			m.ResetConnections()
+			return lastErr, true
 		}
 	}
 
-	return lastErr
+	return lastErr, false
 }
 
 // StartHealthChecks periodically probes upstreams without relying on request traffic.
