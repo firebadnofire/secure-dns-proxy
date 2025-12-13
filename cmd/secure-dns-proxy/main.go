@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"archuser.org/secure-dns-proxy/internal/cache"
 	"archuser.org/secure-dns-proxy/internal/config"
 	"archuser.org/secure-dns-proxy/internal/ingress"
 	"archuser.org/secure-dns-proxy/internal/logging"
@@ -17,15 +18,20 @@ import (
 	"archuser.org/secure-dns-proxy/internal/upstream"
 )
 
-func main() {
-	var cfgPath string
-	flag.StringVar(&cfgPath, "config", "", "path to JSON config")
-	flag.Parse()
+type serverInstance struct {
+	cfg          config.Config
+	cache        *cache.Cache
+	mgr          *upstream.Manager
+	metrics      *metrics.Metrics
+	srv          *ingress.Server
+	log          logging.Logger
+	healthCancel context.CancelFunc
+}
 
+func newServerInstance(cfgPath string, existingCache *cache.Cache) (*serverInstance, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	log := logging.New(logging.Level(cfg.Logging.Level))
@@ -36,29 +42,83 @@ func main() {
 
 	mgr, _, err := upstream.BuildManager(cfg, log, metricsSink)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build upstream manager: %v\n", err)
+		return nil, fmt.Errorf("failed to build upstream manager: %w", err)
+	}
+
+	var cacheInstance *cache.Cache
+	if existingCache != nil {
+		existingCache.UpdateConfig(cfg.Cache)
+		cacheInstance = existingCache
+	} else {
+		cacheInstance = cache.New(cfg.Cache)
+	}
+
+	res := resolver.New(cfg, cacheInstance, mgr, log, metricsSink)
+	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log, metricsSink)
+
+	healthCtx, cancel := context.WithCancel(context.Background())
+	if cfg.HealthChecks.Enabled {
+		mgr.StartHealthChecks(healthCtx)
+	}
+
+	return &serverInstance{cfg: cfg, cache: cacheInstance, mgr: mgr, metrics: metricsSink, srv: srv, log: log, healthCancel: cancel}, nil
+}
+
+func (s *serverInstance) shutdown(ctx context.Context) {
+	if s.healthCancel != nil {
+		s.healthCancel()
+	}
+	if err := s.srv.Shutdown(ctx); err != nil {
+		s.log.Warn("shutdown incomplete", "error", err)
+	}
+}
+
+func main() {
+	var cfgPath string
+	flag.StringVar(&cfgPath, "config", "", "path to JSON config")
+	flag.Parse()
+
+	inst, err := newServerInstance(cfgPath, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 
-	res := resolver.New(cfg, mgr, log, metricsSink)
-	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log, metricsSink)
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	if cfg.HealthChecks.Enabled {
-		mgr.StartHealthChecks(ctx)
-	}
-
-	if err := srv.Start(); err != nil {
+	if err := inst.srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start server: %v\n", err)
 		os.Exit(1)
 	}
-	log.Info("secure-dns-proxy started", "addr", fmt.Sprintf("%s:%d", cfg.BindAddress, cfg.Port), "policy", cfg.UpstreamPolicy)
+	inst.log.Info("secure-dns-proxy started", "addr", fmt.Sprintf("%s:%d", inst.cfg.BindAddress, inst.cfg.Port), "policy", inst.cfg.UpstreamPolicy)
 
-	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Warn("shutdown incomplete", "error", err)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	reloadCh := make(chan os.Signal, 1)
+	signal.Notify(reloadCh, syscall.SIGHUP)
+
+	for {
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			inst.shutdown(shutdownCtx)
+			return
+		case <-reloadCh:
+			inst.log.Info("reloading configuration")
+			newInst, err := newServerInstance(cfgPath, inst.cache)
+			if err != nil {
+				inst.log.Warn("reload failed", "error", err)
+				continue
+			}
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			inst.shutdown(shutdownCtx)
+			cancel()
+
+			inst = newInst
+			if err := inst.srv.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to restart server after reload: %v\n", err)
+				os.Exit(1)
+			}
+			inst.log.Info("reload complete", "addr", fmt.Sprintf("%s:%d", inst.cfg.BindAddress, inst.cfg.Port), "policy", inst.cfg.UpstreamPolicy)
+		}
 	}
 }

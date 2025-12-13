@@ -36,6 +36,30 @@ func New(cfg config.CacheConfig) *Cache {
 	return &Cache{cfg: cfg, entries: make(map[string]entry)}
 }
 
+// UpdateConfig applies the provided configuration without clearing cache entries.
+func (c *Cache) UpdateConfig(cfg config.CacheConfig) {
+	if cfg.Capacity <= 0 {
+		cfg.Capacity = 1
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.cfg = cfg
+	if len(c.entries) <= c.cfg.Capacity {
+		return
+	}
+
+	excess := len(c.entries) - c.cfg.Capacity
+	if excess > len(c.order) {
+		excess = len(c.order)
+	}
+	for i := 0; i < excess; i++ {
+		key := c.order[i]
+		delete(c.entries, key)
+	}
+	c.order = c.order[excess:]
+}
+
 // KeyFromQuestion returns a stable cache key for the DNS question.
 func KeyFromQuestion(q dns.Question) string {
 	return q.Name + "|" + dns.TypeToString[q.Qtype] + "|" + dns.ClassToString[q.Qclass]
