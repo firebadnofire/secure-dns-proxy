@@ -12,14 +12,15 @@ import (
 )
 
 type DoT struct {
-	address      string
-	pool         *pool.TLSConnPool
-	health       healthState
-	trackTraffic bool
+	address       string
+	pool          *pool.TLSConnPool
+	health        healthState
+	trackTraffic  bool
+	healthEnabled bool
 }
 
-func NewDoT(cfg config.UpstreamConfig, pool *pool.TLSConnPool, trackTraffic bool) *DoT {
-	return &DoT{address: cfg.URL, pool: pool, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic}
+func NewDoT(cfg config.UpstreamConfig, pool *pool.TLSConnPool, trackTraffic bool, healthEnabled bool) *DoT {
+	return &DoT{address: cfg.URL, pool: pool, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
 }
 
 func (d *DoT) ID() string { return d.address }
@@ -31,14 +32,14 @@ func (d *DoT) RecordSuccess() { d.health.success() }
 func (d *DoT) RecordFailure(err error) { d.health.failure() }
 
 func (d *DoT) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
-	if !d.Healthy() {
+	if d.healthEnabled && !d.Healthy() {
 		return nil, ErrCircuitOpen
 	}
-	return d.doExchange(ctx, msg, d.trackTraffic)
+	return d.doExchange(ctx, msg, d.healthEnabled && d.trackTraffic)
 }
 
 func (d *DoT) Probe(ctx context.Context, msg *dns.Msg) error {
-	_, err := d.doExchange(ctx, msg, true)
+	_, err := d.doExchange(ctx, msg, d.healthEnabled)
 	return err
 }
 
