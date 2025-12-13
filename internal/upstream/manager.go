@@ -29,6 +29,8 @@ type Manager struct {
 	metrics   *metrics.Metrics
 	rrCounter atomic.Uint64
 
+	lastReset atomic.Int64
+
 	healthCfg       config.HealthCheckConfig
 	upstreamTimeout time.Duration
 }
@@ -147,10 +149,7 @@ func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 			m.metrics.RecordFailure()
 		}
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no healthy upstreams")
-	}
-	return nil, lastErr
+	return nil, m.handleNoHealthy(lastErr)
 }
 
 func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
@@ -175,7 +174,7 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 			m.metrics.RecordFailure()
 		}
 	}
-	return nil, fmt.Errorf("no healthy upstreams")
+	return nil, m.handleNoHealthy(nil)
 }
 
 func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
@@ -224,10 +223,28 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 			return nil, ctx.Err()
 		}
 	}
+	return nil, m.handleNoHealthy(lastErr)
+}
+
+func (m *Manager) handleNoHealthy(lastErr error) error {
 	if lastErr == nil {
-		lastErr = fmt.Errorf("no successful upstream response")
+		lastErr = fmt.Errorf("no healthy upstreams")
 	}
-	return nil, lastErr
+
+	// Best-effort reset when every upstream is unhealthy to clear stale
+	// pooled connections after connectivity changes.
+	now := time.Now().UnixNano()
+	prev := m.lastReset.Load()
+	if now-prev >= int64(5*time.Second) {
+		if m.lastReset.CompareAndSwap(prev, now) {
+			if m.log != nil {
+				m.log.Info("all upstreams unhealthy, resetting pooled connections")
+			}
+			m.ResetConnections()
+		}
+	}
+
+	return lastErr
 }
 
 // StartHealthChecks periodically probes upstreams without relying on request traffic.
