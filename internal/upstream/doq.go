@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
+	"net"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -116,23 +117,10 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 }
 
 // MakeQUICFactory constructs a QUIC dialer suitable for pooling.
-func MakeQUICFactory(addresses []string, tlsConf *tls.Config, serverName string) pool.QUICConnFactory {
+func MakeQUICFactory(address string, tlsConf *tls.Config, dialer *net.Dialer) pool.QUICConnFactory {
 	return func(ctx context.Context) (quic.Connection, error) {
-		var lastErr error
-		for _, address := range addresses {
-			conf := tlsConf.Clone()
-			if conf == nil {
-				conf = &tls.Config{}
-			}
-			if conf.ServerName == "" {
-				conf.ServerName = serverName
-			}
-			conn, err := quic.DialAddrEarly(ctx, address, conf, &quic.Config{KeepAlivePeriod: 30 * time.Second})
-			if err == nil {
-				return conn, nil
-			}
-			lastErr = err
-		}
-		return nil, lastErr
+		d := *dialer
+		d.Timeout = 0
+		return quic.DialAddrEarly(ctx, address, tlsConf, &quic.Config{KeepAlivePeriod: 30 * time.Second})
 	}
 }
