@@ -3,7 +3,9 @@ package upstream
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -149,7 +151,10 @@ func (m *Manager) Resolve(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 }
 
 func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error, bool) {
-	var lastErr error
+	var (
+		lastErr    error
+		forceReset bool
+	)
 	for _, up := range m.upstreams {
 		if !up.Healthy() {
 			continue
@@ -162,11 +167,14 @@ func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 			return resp, nil, false
 		}
 		lastErr = err
+		if isNetworkError(err) {
+			forceReset = true
+		}
 		if m.metrics != nil {
 			m.metrics.RecordFailure()
 		}
 	}
-	err, retry := m.handleNoHealthy(lastErr)
+	err, retry := m.handleNoHealthy(lastErr, forceReset)
 	return nil, err, retry
 }
 
@@ -175,6 +183,10 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 		return nil, fmt.Errorf("no upstreams configured"), false
 	}
 	start := int(m.rrCounter.Add(1) % uint64(len(m.upstreams)))
+	var (
+		lastErr    error
+		forceReset bool
+	)
 	for i := 0; i < len(m.upstreams); i++ {
 		idx := (start + i) % len(m.upstreams)
 		up := m.upstreams[idx]
@@ -188,11 +200,15 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 			}
 			return resp, nil, false
 		}
+		lastErr = err
+		if isNetworkError(err) {
+			forceReset = true
+		}
 		if m.metrics != nil {
 			m.metrics.RecordFailure()
 		}
 	}
-	err, retry := m.handleNoHealthy(nil)
+	err, retry := m.handleNoHealthy(lastErr, forceReset)
 	return nil, err, retry
 }
 
@@ -224,6 +240,7 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error, bool
 	}
 
 	var lastErr error
+	forceReset := false
 	for i := 0; i < fanout; i++ {
 		select {
 		case r := <-resCh:
@@ -235,6 +252,9 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error, bool
 				return r.resp, nil, false
 			}
 			lastErr = r.err
+			if isNetworkError(r.err) {
+				forceReset = true
+			}
 			if m.metrics != nil {
 				m.metrics.RecordFailure()
 			}
@@ -242,11 +262,11 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error, bool
 			return nil, ctx.Err(), false
 		}
 	}
-	err, retry := m.handleNoHealthy(lastErr)
+	err, retry := m.handleNoHealthy(lastErr, forceReset)
 	return nil, err, retry
 }
 
-func (m *Manager) handleNoHealthy(lastErr error) (error, bool) {
+func (m *Manager) handleNoHealthy(lastErr error, forceReset bool) (error, bool) {
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no healthy upstreams")
 	}
@@ -255,8 +275,8 @@ func (m *Manager) handleNoHealthy(lastErr error) (error, bool) {
 	// pooled connections after connectivity changes.
 	now := time.Now().UnixNano()
 	prev := m.lastReset.Load()
-	if now-prev >= int64(5*time.Second) {
-		if m.lastReset.CompareAndSwap(prev, now) {
+	if forceReset || now-prev >= int64(5*time.Second) {
+		if forceReset || m.lastReset.CompareAndSwap(prev, now) {
 			if m.log != nil {
 				m.log.Info("all upstreams unhealthy, resetting pooled connections")
 			}
@@ -266,6 +286,20 @@ func (m *Manager) handleNoHealthy(lastErr error) (error, bool) {
 	}
 
 	return lastErr, false
+}
+
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return false
 }
 
 // StartHealthChecks periodically probes upstreams without relying on request traffic.
