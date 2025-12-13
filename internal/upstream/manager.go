@@ -47,10 +47,11 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 
 	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics, healthCfg: cfg.HealthChecks, upstreamTimeout: cfg.Timeouts.Upstream.Duration()}
 
-	trackTraffic := !cfg.HealthChecks.Enabled
+	healthEnabled := cfg.HealthChecks.Enabled
+	trackTraffic := false
 
 	for _, upCfg := range cfg.Upstreams {
-		u, err := buildUpstream(upCfg, cfg, httpClient, dialer, tlsConfig, log, metrics, trackTraffic)
+		u, err := buildUpstream(upCfg, cfg, httpClient, dialer, tlsConfig, log, metrics, trackTraffic, healthEnabled)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -60,7 +61,7 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 	return mgr, httpClient, nil
 }
 
-func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *http.Client, dialer *net.Dialer, tlsConf *tls.Config, log logging.Logger, metrics *metrics.Metrics, trackTraffic bool) (Upstream, error) {
+func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *http.Client, dialer *net.Dialer, tlsConf *tls.Config, log logging.Logger, metrics *metrics.Metrics, trackTraffic bool, healthEnabled bool) (Upstream, error) {
 	target := upCfg.URL
 	if !strings.Contains(target, "://") {
 		target = "dns://" + target
@@ -75,9 +76,9 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "53")
 		}
-		return NewPlainDNS(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, cfg.Timeouts.Upstream.Duration(), trackTraffic), nil
+		return NewPlainDNS(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, cfg.Timeouts.Upstream.Duration(), trackTraffic, healthEnabled), nil
 	case "https":
-		return NewDoH(upCfg, httpClient, trackTraffic), nil
+		return NewDoH(upCfg, httpClient, trackTraffic, healthEnabled), nil
 	case "tls":
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
@@ -88,7 +89,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if cfg.PrewarmPools {
 			go tlsPool.Prewarm(context.Background())
 		}
-		return NewDoT(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, tlsPool, trackTraffic), nil
+		return NewDoT(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, tlsPool, trackTraffic, healthEnabled), nil
 	case "quic":
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
@@ -108,7 +109,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if cfg.PrewarmPools {
 			go quicPool.Prewarm(context.Background())
 		}
-		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS, trackTraffic), nil
+		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS, trackTraffic, healthEnabled), nil
 	default:
 		return nil, fmt.Errorf("unsupported scheme %s", parsed.Scheme)
 	}
@@ -234,11 +235,11 @@ func (m *Manager) StartHealthChecks(ctx context.Context) {
 	}
 	interval := m.healthCfg.Interval.Duration()
 	if interval <= 0 {
-		interval = 10 * time.Second
+		interval = 120 * time.Second
 	}
 	query := m.healthCfg.Query
 	if query == "" {
-		query = "example.com."
+		query = "."
 	}
 	tmpl := new(dns.Msg)
 	tmpl.SetQuestion(dns.Fqdn(query), dns.TypeA)

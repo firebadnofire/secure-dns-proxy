@@ -12,14 +12,15 @@ import (
 )
 
 type PlainDNS struct {
-	address      string
-	timeout      time.Duration
-	health       healthState
-	trackTraffic bool
+	address       string
+	timeout       time.Duration
+	health        healthState
+	trackTraffic  bool
+	healthEnabled bool
 }
 
-func NewPlainDNS(cfg config.UpstreamConfig, timeout time.Duration, trackTraffic bool) *PlainDNS {
-	return &PlainDNS{address: cfg.URL, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic}
+func NewPlainDNS(cfg config.UpstreamConfig, timeout time.Duration, trackTraffic bool, healthEnabled bool) *PlainDNS {
+	return &PlainDNS{address: cfg.URL, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
 }
 
 func (p *PlainDNS) ID() string { return fmt.Sprintf("dns://%s", p.address) }
@@ -31,14 +32,14 @@ func (p *PlainDNS) RecordSuccess() { p.health.success() }
 func (p *PlainDNS) RecordFailure(err error) { p.health.failure() }
 
 func (p *PlainDNS) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
-	if !p.Healthy() {
+	if p.healthEnabled && !p.Healthy() {
 		return nil, ErrCircuitOpen
 	}
-	return p.doExchange(ctx, msg, p.trackTraffic)
+	return p.doExchange(ctx, msg, p.healthEnabled && p.trackTraffic)
 }
 
 func (p *PlainDNS) Probe(ctx context.Context, msg *dns.Msg) error {
-	_, err := p.doExchange(ctx, msg, true)
+	_, err := p.doExchange(ctx, msg, p.healthEnabled)
 	return err
 }
 

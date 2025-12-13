@@ -16,15 +16,16 @@ import (
 )
 
 type DoQ struct {
-	address      string
-	pool         *pool.QUICConnPool
-	tlsConf      *tls.Config
-	health       healthState
-	trackTraffic bool
+	address       string
+	pool          *pool.QUICConnPool
+	tlsConf       *tls.Config
+	health        healthState
+	trackTraffic  bool
+	healthEnabled bool
 }
 
-func NewDoQ(cfg config.UpstreamConfig, pool *pool.QUICConnPool, tlsConf *tls.Config, trackTraffic bool) *DoQ {
-	return &DoQ{address: cfg.URL, pool: pool, tlsConf: tlsConf, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic}
+func NewDoQ(cfg config.UpstreamConfig, pool *pool.QUICConnPool, tlsConf *tls.Config, trackTraffic bool, healthEnabled bool) *DoQ {
+	return &DoQ{address: cfg.URL, pool: pool, tlsConf: tlsConf, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
 }
 
 func (d *DoQ) ID() string { return d.address }
@@ -36,14 +37,14 @@ func (d *DoQ) RecordSuccess() { d.health.success() }
 func (d *DoQ) RecordFailure(err error) { d.health.failure() }
 
 func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
-	if !d.Healthy() {
+	if d.healthEnabled && !d.Healthy() {
 		return nil, ErrCircuitOpen
 	}
-	return d.doExchange(ctx, msg, d.trackTraffic)
+	return d.doExchange(ctx, msg, d.healthEnabled && d.trackTraffic)
 }
 
 func (d *DoQ) Probe(ctx context.Context, msg *dns.Msg) error {
-	_, err := d.doExchange(ctx, msg, true)
+	_, err := d.doExchange(ctx, msg, d.healthEnabled)
 	return err
 }
 

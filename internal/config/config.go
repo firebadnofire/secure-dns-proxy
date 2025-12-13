@@ -150,9 +150,9 @@ func Default() Config {
 		UpstreamPolicy:     "round_robin",
 		UpstreamRaceFanout: 2,
 		HealthChecks: HealthCheckConfig{
-			Enabled:  false,
-			Interval: Duration(10 * time.Second),
-			Query:    "example.com.",
+			Enabled:  true,
+			Interval: Duration(120 * time.Second),
+			Query:    ".",
 		},
 		Cache: CacheConfig{
 			Enabled:          true,
