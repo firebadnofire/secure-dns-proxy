@@ -85,24 +85,9 @@ func (d *DoT) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 }
 
 // MakeTLSFactory returns a dialer for the TLS pool.
-func MakeTLSFactory(addresses []string, serverName string, tlsConfig *tls.Config, dialer *net.Dialer) pool.TLSConnFactory {
+func MakeTLSFactory(address string, tlsConfig *tls.Config, dialer *net.Dialer) pool.TLSConnFactory {
 	return func(ctx context.Context) (net.Conn, error) {
-		var lastErr error
-		for _, address := range addresses {
-			conf := tlsConfig.Clone()
-			if conf == nil {
-				conf = &tls.Config{}
-			}
-			if conf.ServerName == "" {
-				conf.ServerName = serverName
-			}
-			d := tls.Dialer{NetDialer: dialer, Config: conf}
-			conn, err := d.DialContext(ctx, "tcp", address)
-			if err == nil {
-				return conn, nil
-			}
-			lastErr = err
-		}
-		return nil, lastErr
+		d := tls.Dialer{NetDialer: dialer, Config: tlsConfig}
+		return d.DialContext(ctx, "tcp", address)
 	}
 }
