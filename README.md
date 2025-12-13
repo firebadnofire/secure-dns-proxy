@@ -1,6 +1,6 @@
 # secure-dns-proxy
 
-`secure-dns-proxy` is a local DNS stub that accepts UDP/TCP DNS queries and forwards them to plaintext DNS, DNS-over-HTTPS (DoH), DNS-over-TLS (DoT), or DNS-over-QUIC (DoQ) upstreams. The rewrite focuses on efficient connection reuse, pluggable upstream policies, caching, and safe concurrency for high-QPS workloads.
+`secure-dns-proxy` is a local DNS stub meant to replace `systemd-resolved` with a modern resolver that speaks plaintext DNS, DNS-over-HTTPS (DoH), DNS-over-TLS (DoT), and DNS-over-QUIC (DoQ). The rewrite focuses on efficient connection reuse, pluggable upstream policies, caching, and safe concurrency for high-QPS workloads.
 
 ## Features
 - UDP/TCP ingress backed by `miekg/dns` with graceful shutdown
@@ -12,6 +12,19 @@
 - Active health probes (root query every 120s by default) keep health independent of live traffic; can be disabled to treat all upstreams as available
 - Structured logging and lightweight internal metrics hooks
 - EDNS0 support with sane defaults
+
+## Requirements
+
+### Build dependencies
+- Go 1.22 or newer
+- `make`
+
+### Runtime dependencies
+- Linux host with UDP/TCP port 53 available (the binary can run without `systemd` if launched manually)
+- Optional: `setcap` to grant `CAP_NET_BIND_SERVICE` for binding privileged ports without running as root
+
+### `make install` dependencies
+The `make install` target installs a systemd service unit and sysctl drop-in; it therefore requires `systemd`, root privileges, and a writable `/etc` tree. If you do not use `systemd`, build and launch the binary manually instead of running `make install`.
 
 ## Getting started
 Build with Go 1.22 or newer:
