@@ -51,10 +51,11 @@ func (d Duration) Duration() time.Duration {
 
 // Config describes the full runtime configuration for the proxy.
 type Config struct {
-	BindAddress string           `json:"bind_address"`
-	Port        int              `json:"port"`
-	InsecureTLS bool             `json:"insecure_tls"`
-	Upstreams   []UpstreamConfig `json:"upstreams"`
+	BindAddress string              `json:"bind_address"`
+	Port        int                 `json:"port"`
+	InsecureTLS bool                `json:"insecure_tls"`
+	Upstreams   []UpstreamConfig    `json:"upstreams"`
+	HardIPs     map[string][]string `json:"hard_ips"`
 
 	UpstreamPolicy     string `json:"upstream_policy"`
 	UpstreamRaceFanout int    `json:"upstream_race_fanout"`
@@ -149,6 +150,9 @@ func Default() Config {
 		InsecureTLS:        false,
 		UpstreamPolicy:     "round_robin",
 		UpstreamRaceFanout: 2,
+		HardIPs: map[string][]string{
+			"doh.archuser.org": {"172.239.201.109", "2600:3c06::2000:f9ff:fe81:97f2"},
+		},
 		HealthChecks: HealthCheckConfig{
 			Enabled:  false,
 			Interval: Duration(10 * time.Second),

@@ -34,16 +34,19 @@ type Manager struct {
 
 // BuildManager constructs upstream clients and pools from config.
 func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metrics) (*Manager, *http.Client, error) {
+	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
+
 	transport := &http.Transport{
 		MaxIdleConns:        cfg.Pools.HTTPTransport.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Pools.HTTPTransport.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.Pools.HTTPTransport.IdleConnTimeout.Duration(),
 		TLSHandshakeTimeout: cfg.Pools.HTTPTransport.TLSHandshakeTimeout.Duration(),
+		DialContext:         makeHardDialContext(dialer, cfg.HardIPs),
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS},
 	}
 	httpClient := &http.Client{Transport: transport}
 
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
-	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
 
 	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics, healthCfg: cfg.HealthChecks, upstreamTimeout: cfg.Timeouts.Upstream.Duration()}
 
@@ -83,12 +86,17 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "853")
 		}
-		factory := MakeTLSFactory(addr, tlsConf, dialer)
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tls upstream %s: %w", target, err)
+		}
+		addresses := buildDialTargets(host, port, cfg.HardIPs)
+		factory := MakeTLSFactory(addresses, host, tlsConf, dialer)
 		tlsPool := pool.NewTLSConnPool(cfg.Pools.TLS.Size, cfg.Pools.TLS.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go tlsPool.Prewarm(context.Background())
 		}
-		return NewDoT(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, tlsPool, trackTraffic), nil
+		return NewDoT(config.UpstreamConfig{URL: net.JoinHostPort(host, port), MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, tlsPool, trackTraffic), nil
 	case "quic":
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
@@ -103,14 +111,51 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if quicTLS.ServerName == "" {
 			quicTLS.ServerName = host
 		}
-		factory := MakeQUICFactory(addr, quicTLS, dialer)
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid quic upstream %s: %w", target, err)
+		}
+		addresses := buildDialTargets(host, port, cfg.HardIPs)
+		factory := MakeQUICFactory(addresses, quicTLS, host)
 		quicPool := pool.NewQUICConnPool(cfg.Pools.QUIC.Size, cfg.Pools.QUIC.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go quicPool.Prewarm(context.Background())
 		}
-		return NewDoQ(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS, trackTraffic), nil
+		return NewDoQ(config.UpstreamConfig{URL: net.JoinHostPort(host, port), MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, quicPool, quicTLS, trackTraffic), nil
 	default:
 		return nil, fmt.Errorf("unsupported scheme %s", parsed.Scheme)
+	}
+}
+
+func buildDialTargets(host, port string, hardIPs map[string][]string) []string {
+	var targets []string
+	if ips := hardIPs[host]; len(ips) > 0 {
+		targets = make([]string, 0, len(ips)+1)
+		for _, ip := range ips {
+			targets = append(targets, net.JoinHostPort(ip, port))
+		}
+	}
+	return append(targets, net.JoinHostPort(host, port))
+}
+
+func makeHardDialContext(dialer *net.Dialer, hardIPs map[string][]string) func(ctx context.Context, network, address string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return dialer.DialContext(ctx, network, address)
+		}
+		var lastErr error
+		for _, target := range buildDialTargets(host, port, hardIPs) {
+			conn, err := dialer.DialContext(ctx, network, target)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("failed to dial %s after trying hard IPs", address)
 	}
 }
 
