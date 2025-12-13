@@ -4,6 +4,9 @@
   "insecure_tls": false,
   "upstream_policy": "round_robin",
   "upstream_race_fanout": 2,
+  "hard_ips": {
+    "doh.archuser.org": ["172.239.201.109", "2600:3c06::2000:f9ff:fe81:97f2"]
+  },
   "upstreams": [
     {"url": "https://doh.archuser.org/dns-query"},
     {"url": "tls://doh.archuser.org:853"},
