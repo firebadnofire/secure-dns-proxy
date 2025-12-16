@@ -28,13 +28,17 @@ type serverInstance struct {
 	healthCancel context.CancelFunc
 }
 
-func newServerInstance(cfgPath string, existingCache *cache.Cache) (*serverInstance, error) {
+func newServerInstance(cfgPath string, existingCache *cache.Cache, logLevel string) (*serverInstance, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	log := logging.New(logging.Level(cfg.Logging.Level))
+	if logLevel != "" {
+		cfg.Logging.Level = logLevel
+	}
+
+	log := logging.New(logging.ParseLevel(cfg.Logging.Level))
 	var metricsSink *metrics.Metrics
 	if cfg.Metrics.Enabled {
 		metricsSink = &metrics.Metrics{}
@@ -75,10 +79,12 @@ func (s *serverInstance) shutdown(ctx context.Context) {
 
 func main() {
 	var cfgPath string
+	var logLevel string
 	flag.StringVar(&cfgPath, "config", "", "path to JSON config")
+	flag.StringVar(&logLevel, "log-level", "", "override log level (debug, info, warn, error)")
 	flag.Parse()
 
-	inst, err := newServerInstance(cfgPath, nil)
+	inst, err := newServerInstance(cfgPath, nil, logLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -104,7 +110,7 @@ func main() {
 			return
 		case <-reloadCh:
 			inst.log.Info("reloading configuration")
-			newInst, err := newServerInstance(cfgPath, inst.cache)
+			newInst, err := newServerInstance(cfgPath, inst.cache, logLevel)
 			if err != nil {
 				inst.log.Warn("reload failed", "error", err)
 				continue

@@ -124,6 +124,11 @@ sudo make deinstall
 > due to firewalls or ALPN mismatches), the first live query may spend extra time establishing connections before reusing pool
 > state for subsequent lookups.
 
+### Logging
+- Logs default to `info` level. Override at startup with `-log-level debug|info|warn|error` without touching configuration
+  files.
+- INFO entries are formatted for easier reading (e.g., `INFO cumulative traffic in_bytes=3149 out_bytes=13736`).
+
 ### Notes on architecture changes
 - **DoH transport reuse:** a single tuned `http.Client` backs all DoH requests to preserve keep-alives.
 - **Connection pools:** DoT and DoQ share configurable pools with optional pre-warming to reduce handshake latency.
