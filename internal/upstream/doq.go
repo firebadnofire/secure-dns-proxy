@@ -74,6 +74,17 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		return nil, err
 	}
 
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := stream.SetDeadline(deadline); err != nil {
+			releaseOnce(err)
+			if recordHealth {
+				d.RecordFailure(err)
+			}
+			return nil, err
+		}
+	}
+
+	msg.Id = 0
 	payload, err := msg.Pack()
 	if err != nil {
 		releaseOnce(err)
@@ -135,6 +146,6 @@ func MakeQUICFactory(address string, tlsConf *tls.Config, dialer *net.Dialer) po
 	return func(ctx context.Context) (quic.Connection, error) {
 		d := *dialer
 		d.Timeout = 0
-		return quic.DialAddrEarly(ctx, address, tlsConf, &quic.Config{KeepAlivePeriod: 30 * time.Second})
+		return quic.DialAddr(ctx, address, tlsConf, &quic.Config{KeepAlivePeriod: 30 * time.Second})
 	}
 }
