@@ -84,7 +84,15 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "853")
 		}
-		factory := MakeTLSFactory(addr, tlsConf, dialer)
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tls upstream %s: %w", target, err)
+		}
+		tlsCfg := tlsConf.Clone()
+		if tlsCfg.ServerName == "" {
+			tlsCfg.ServerName = host
+		}
+		factory := MakeTLSFactory(addr, tlsCfg, dialer)
 		tlsPool := pool.NewTLSConnPool(cfg.Pools.TLS.Size, cfg.Pools.TLS.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go tlsPool.Prewarm(context.Background())

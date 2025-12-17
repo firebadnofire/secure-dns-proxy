@@ -3,6 +3,7 @@ package upstream
 import (
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"io"
 	"net"
 	"time"
@@ -78,7 +79,10 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		releaseOnce(err)
 		return nil, err
 	}
-	if _, err := stream.Write(payload); err != nil {
+	frame := make([]byte, 2+len(payload))
+	binary.BigEndian.PutUint16(frame[:2], uint16(len(payload)))
+	copy(frame[2:], payload)
+	if _, err := stream.Write(frame); err != nil {
 		stream.CancelWrite(0)
 		releaseOnce(err)
 		if recordHealth {
@@ -95,9 +99,18 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		return nil, err
 	}
 
-	respBuf, err := io.ReadAll(stream)
-	releaseOnce(err)
-	if err != nil {
+	var lengthBuf [2]byte
+	if _, err := io.ReadFull(stream, lengthBuf[:]); err != nil {
+		releaseOnce(err)
+		if recordHealth {
+			d.RecordFailure(err)
+		}
+		return nil, err
+	}
+	respLen := binary.BigEndian.Uint16(lengthBuf[:])
+	respBuf := make([]byte, respLen)
+	if _, err := io.ReadFull(stream, respBuf); err != nil {
+		releaseOnce(err)
 		if recordHealth {
 			d.RecordFailure(err)
 		}
