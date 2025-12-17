@@ -92,6 +92,9 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if tlsCfg.ServerName == "" {
 			tlsCfg.ServerName = host
 		}
+		if len(tlsCfg.NextProtos) == 0 {
+			tlsCfg.NextProtos = []string{"dot"}
+		}
 		factory := MakeTLSFactory(addr, tlsCfg, dialer)
 		tlsPool := pool.NewTLSConnPool(cfg.Pools.TLS.Size, cfg.Pools.TLS.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
