@@ -1,6 +1,6 @@
 # secure-dns-proxy
 
-`secure-dns-proxy` is a local DNS stub meant to replace `systemd-resolved` with a modern resolver that speaks plaintext DNS, DNS-over-HTTPS (DoH), DNS-over-TLS (DoT), and DNS-over-QUIC (DoQ). The rewrite focuses on efficient connection reuse, pluggable upstream policies, caching, and safe concurrency for high-QPS workloads.
+`secure-dns-proxy` is a local DNS stub that speaks plaintext DNS, DNS-over-HTTPS (DoH), DNS-over-TLS (DoT), and DNS-over-QUIC (DoQ). It focuses on efficient connection reuse, pluggable upstream policies, caching, and safe concurrency for high-QPS workloads.
 
 ## Features
 - UDP/TCP ingress backed by `miekg/dns` with graceful shutdown
@@ -13,18 +13,11 @@
 - Structured logging and lightweight internal metrics hooks
 - EDNS0 support with sane defaults
 
-## Requirements
+## Dependencies
 
-### Build dependencies
-- Go 1.22 or newer
-- `make`
-
-### Runtime dependencies
-- Linux host with UDP/TCP port 53 available (the binary can run without `systemd` if launched manually)
-- Optional: `setcap` to grant `CAP_NET_BIND_SERVICE` for binding privileged ports without running as root
-
-### `make install` dependencies
-The `make install` target installs a systemd service unit and sysctl drop-in; it therefore requires `systemd`, root privileges, and a writable `/etc` tree. If you do not use `systemd`, build and launch the binary manually instead of running `make install`.
+- **Build:** Go 1.22+ and `make`.
+- **Runtime:** Linux host with UDP/TCP port 53 free. `systemd` is optional; run the binary directly or via the provided service unit. `setcap` can grant `CAP_NET_BIND_SERVICE` so the process can bind port 53 without running as root.
+- **`make install` target:** needs `systemd`, root privileges, and a writable `/etc` tree to install the unit, sysctl drop-in, and config files. Skip this target if you run the binary manually.
 
 ## Getting started
 Build with Go 1.22 or newer:
