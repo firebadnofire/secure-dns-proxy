@@ -25,40 +25,44 @@ INSTALL ?= install
 SYSTEMD_SERVICE := packaging/systemd/$(PREFIX).service
 SYSCTL_CONF     := packaging/sysctl/$(PREFIX).conf
 
-.PHONY: all clean stage package install upgrade uninstall deinstall
+.PHONY: all package stage build install upgrade uninstall deinstall clean
 
-all: package
+# default target: build the package only
+package: $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz
 
-# build the binary once for staging and install
+# explicit build target
+build: $(BUILD_BIN)
+
+# build the binary
 $(BUILD_BIN):
 	mkdir -p $(dir $@)
 	go build -o $@ ./cmd/$(PREFIX)
 
-# 1) stage the binary
+# stage binary
 $(BIN_STG): $(BUILD_BIN)
 	mkdir -p $@
 	cp $(BUILD_BIN) $(BIN_STG)/$(PREFIX)
 
-# 2) stage the config
+# stage config
 $(CONF_STG):
 	mkdir -p $@
 	cp $(EXAMPLE_CONF) $(CONF_STG)/config.example.json
 	cp $(DEFAULT_CONF) $(CONF_STG)/config.json
 
-# 3) assemble the staging tree
+# assemble staging tree
 stage: $(BIN_STG) $(CONF_STG)
 
-# 4) create the final tar.gz
-#    it will contain a top-level folder named "secure-dns-proxy"
+# create tarball
 $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz: stage
 	mkdir -p $(DISTDIR)
-	tar -czf $@ \
-	-C $(STAGEDIR) $(PREFIX)
+	tar -czf $@ -C $(STAGEDIR) $(PREFIX)
 
-package: $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz
+# build package, then install
+all: package install
 
-# install binary, config example, sysctl tuning, and systemd unit
-install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
+# install assumes the binary already exists
+install:
+	@test -x $(BUILD_BIN) || { echo "error: binary not built; run 'make build' or 'make' first"; exit 1; }
 	getent group $(PREFIX) >/dev/null 2>&1 || groupadd -r $(PREFIX)
 	id -u $(PREFIX) >/dev/null 2>&1 || \
 	useradd -r -g $(PREFIX) -s /usr/sbin/nologin -d /nonexistent -M $(PREFIX)
@@ -69,22 +73,22 @@ install: $(BUILD_BIN) $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
 	echo "setcap not available; ensure the binary can bind to privileged ports"
 	$(INSTALL) -d -m 0750 -o $(PREFIX) -g $(PREFIX) $(DESTDIR)/etc/$(PREFIX)
 	$(INSTALL) -m 0644 $(EXAMPLE_CONF) $(DESTDIR)/etc/$(PREFIX)/config.example.json
-	[ -f $(DESTDIR)/etc/$(PREFIX)/config.json ] || $(INSTALL) -m 0640 -o $(PREFIX) -g $(PREFIX) $(DEFAULT_CONF) $(DESTDIR)/etc/$(PREFIX)/config.json
+	[ -f $(DESTDIR)/etc/$(PREFIX)/config.json ] || \
+	$(INSTALL) -m 0640 -o $(PREFIX) -g $(PREFIX) $(DEFAULT_CONF) $(DESTDIR)/etc/$(PREFIX)/config.json
 	$(INSTALL) -d $(DESTDIR)$(SYSTEMD_UNIT_DIR)
 	$(INSTALL) -m 0644 $(SYSTEMD_SERVICE) $(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	$(INSTALL) -d $(DESTDIR)$(SYSCTL_DIR)
 	$(INSTALL) -m 0644 $(SYSCTL_CONF) $(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf
 	[ -z "$(DESTDIR)" ] && sysctl -q -w net.core.rmem_max=8388608 net.core.rmem_default=8388608 || true
 
-.PHONY: upgrade
-upgrade: $(BUILD_BIN)
+upgrade:
+	@test -x $(BUILD_BIN) || { echo "error: binary not built"; exit 1; }
 	$(INSTALL) -d $(DESTDIR)$(INSTALL_PREFIX)/bin
 	$(INSTALL) -m 0755 $(BUILD_BIN) $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX)
 	command -v setcap >/dev/null 2>&1 && \
 	setcap 'cap_net_bind_service=+ep' $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX) || \
 	echo "setcap not available; ensure the binary can bind to privileged ports"
 
-.PHONY: uninstall deinstall
 uninstall deinstall:
 	rm -f $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX)
 	rm -f $(DESTDIR)/etc/$(PREFIX)/config.json $(DESTDIR)/etc/$(PREFIX)/config.example.json
@@ -94,7 +98,5 @@ uninstall deinstall:
 	userdel $(PREFIX) 2>/dev/null || true
 	groupdel $(PREFIX) 2>/dev/null || true
 
-# cleanup everything
 clean:
 	rm -rf build $(DISTDIR)
-
