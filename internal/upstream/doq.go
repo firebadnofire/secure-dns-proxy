@@ -1,3 +1,4 @@
+// Package upstream implements DNS upstream protocols.
 package upstream
 
 import (
@@ -15,27 +16,40 @@ import (
 	"archuser.org/secure-dns-proxy/internal/pool"
 )
 
+// DoQ implements DNS-over-QUIC exchanges.
 type DoQ struct {
-	address       string
-	pool          *pool.QUICConnPool
-	tlsConf       *tls.Config
-	health        healthState
-	trackTraffic  bool
+	// address is the QUIC endpoint host:port.
+	address string
+	// pool provides reusable QUIC connections.
+	pool *pool.QUICConnPool
+	// tlsConf configures TLS for the QUIC connection.
+	tlsConf *tls.Config
+	// health tracks failures for circuit breaking.
+	health healthState
+	// trackTraffic toggles whether to count success/failure on normal traffic.
+	trackTraffic bool
+	// healthEnabled toggles circuit breaker logic.
 	healthEnabled bool
 }
 
+// NewDoQ constructs a DoQ upstream with pooled QUIC connections.
 func NewDoQ(cfg config.UpstreamConfig, pool *pool.QUICConnPool, tlsConf *tls.Config, trackTraffic bool, healthEnabled bool) *DoQ {
 	return &DoQ{address: cfg.URL, pool: pool, tlsConf: tlsConf, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
 }
 
+// ID returns the upstream address for logging and selection.
 func (d *DoQ) ID() string { return d.address }
 
+// Healthy reports whether the upstream is eligible for use.
 func (d *DoQ) Healthy() bool { return d.health.healthy() }
 
+// RecordSuccess resets failure counters.
 func (d *DoQ) RecordSuccess() { d.health.success() }
 
+// RecordFailure increments failure counters and triggers cooldown.
 func (d *DoQ) RecordFailure(err error) { d.health.failure() }
 
+// Exchange performs a DNS-over-QUIC query, honoring circuit breaker state.
 func (d *DoQ) Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if d.healthEnabled && !d.Healthy() {
 		return nil, ErrCircuitOpen
@@ -48,6 +62,7 @@ func (d *DoQ) Probe(ctx context.Context, msg *dns.Msg) error {
 	return err
 }
 
+// doExchange opens a QUIC stream, writes the DNS query, and reads the response.
 func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (*dns.Msg, error) {
 	session, release, err := d.pool.Acquire(ctx)
 	if err != nil {
@@ -64,6 +79,7 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 	}
 	defer releaseOnce(nil)
 
+	// Open a bidirectional stream for this query.
 	stream, err := session.OpenStreamSync(ctx)
 	if err != nil {
 		releaseOnce(err)
@@ -79,6 +95,7 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		return nil, err
 	}
 	if _, err := stream.Write(payload); err != nil {
+		// Cancel write to unblock the peer if write fails.
 		stream.CancelWrite(0)
 		releaseOnce(err)
 		if recordHealth {
@@ -87,6 +104,7 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		return nil, err
 	}
 	if err := stream.Close(); err != nil {
+		// Close can fail if the peer resets; still record failure.
 		stream.CancelWrite(0)
 		releaseOnce(err)
 		if recordHealth {

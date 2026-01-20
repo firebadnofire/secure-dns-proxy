@@ -1,3 +1,5 @@
+// Package cache implements DNS response caching with TTL handling and request
+// coalescing.
 package cache
 
 import (
@@ -11,20 +13,28 @@ import (
 	"archuser.org/secure-dns-proxy/internal/config"
 )
 
+// entry is a single cached response plus metadata.
 type entry struct {
-	msg      *dns.Msg
-	expires  time.Time
+	// msg is the cached DNS response.
+	msg *dns.Msg
+	// expires indicates when the entry becomes stale.
+	expires time.Time
+	// negative tracks NXDOMAIN-like responses for TTL calculation.
 	negative bool
 }
 
-// Cache implements TTL-based positive and negative caching with request coalescing.
+// Cache implements TTL-based positive and negative caching with request
+// coalescing to avoid duplicate upstream lookups.
 type Cache struct {
+	// cfg contains cache behavior toggles and TTL defaults.
 	cfg config.CacheConfig
 
+	// mu protects entries and eviction order.
 	mu      sync.Mutex
 	entries map[string]entry
 	order   []string
 
+	// group coalesces concurrent requests for the same key.
 	group singleflight.Group
 }
 
@@ -37,6 +47,7 @@ func New(cfg config.CacheConfig) *Cache {
 }
 
 // UpdateConfig applies the provided configuration without clearing cache entries.
+// If the cache is now oversized, it evicts from the front of the FIFO order.
 func (c *Cache) UpdateConfig(cfg config.CacheConfig) {
 	if cfg.Capacity <= 0 {
 		cfg.Capacity = 1
@@ -61,6 +72,7 @@ func (c *Cache) UpdateConfig(cfg config.CacheConfig) {
 }
 
 // KeyFromQuestion returns a stable cache key for the DNS question.
+// It includes the name, type, and class so distinct queries do not collide.
 func KeyFromQuestion(q dns.Question) string {
 	return q.Name + "|" + dns.TypeToString[q.Qtype] + "|" + dns.ClassToString[q.Qclass]
 }
@@ -103,7 +115,8 @@ func (c *Cache) Set(key string, msg *dns.Msg, ttl time.Duration, negative bool) 
 	c.order = append(c.order, key)
 }
 
-// Fetch returns a cached response or executes the loader once for concurrent callers.
+// Fetch returns a cached response or executes the loader once for concurrent
+// callers, then stores the result using the computed TTL.
 func (c *Cache) Fetch(ctx context.Context, key string, loader func(context.Context) (*dns.Msg, error)) (*dns.Msg, bool, error) {
 	if msg, ok := c.Get(key); ok {
 		return msg, true, nil
@@ -122,6 +135,8 @@ func (c *Cache) Fetch(ctx context.Context, key string, loader func(context.Conte
 	return msg.Copy(), false, nil
 }
 
+// ttlForMessage determines the cache TTL for the provided DNS response and
+// returns whether the response is negative.
 func (c *Cache) ttlForMessage(msg *dns.Msg) (time.Duration, bool) {
 	if msg == nil {
 		return 0, false
@@ -146,6 +161,7 @@ func (c *Cache) ttlForMessage(msg *dns.Msg) (time.Duration, bool) {
 	return time.Duration(ttlSeconds) * time.Second, negative
 }
 
+// minTTL returns the smallest TTL among a list of DNS resource records.
 func minTTL(rrs []dns.RR) uint32 {
 	if len(rrs) == 0 {
 		return 0
