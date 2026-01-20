@@ -1,3 +1,4 @@
+// Package ingress exposes the UDP/TCP DNS server used for client queries.
 package ingress
 
 import (
@@ -17,12 +18,17 @@ import (
 
 // Server handles UDP and TCP DNS ingress.
 type Server struct {
-	udp     *dns.Server
-	tcp     *dns.Server
-	res     *resolver.Resolver
-	log     logging.Logger
+	// udp/tcp servers share the same handler to process DNS queries.
+	udp *dns.Server
+	tcp *dns.Server
+	// res forwards questions to the resolver (cache + upstreams).
+	res *resolver.Resolver
+	// log emits structured diagnostics.
+	log logging.Logger
+	// metrics tracks counters when enabled.
 	metrics *metrics.Metrics
 
+	// requestCount/traffic counters are local aggregates for logging.
 	requestCount atomic.Uint64
 	trafficIn    atomic.Uint64
 	trafficOut   atomic.Uint64
@@ -33,10 +39,12 @@ func New(bindAddr string, port int, res *resolver.Resolver, log logging.Logger, 
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(port))
 	s := &Server{res: res, log: log, metrics: metrics}
 
+	// Handler delegates request processing to the resolver.
 	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 		s.handle(context.Background(), w, r)
 	})
 
+	// UDP and TCP servers share the same address and handler.
 	s.udp = &dns.Server{Addr: addr, Net: "udp", Handler: handler, ReusePort: true, UDPSize: dns.DefaultMsgSize}
 	s.tcp = &dns.Server{Addr: addr, Net: "tcp", Handler: handler, ReusePort: true}
 	return s
@@ -59,6 +67,7 @@ func (s *Server) Start() error {
 
 // Shutdown gracefully stops listeners.
 func (s *Server) Shutdown(ctx context.Context) error {
+	// Shutdown both servers concurrently and wait for both to return.
 	stopCh := make(chan struct{}, 2)
 	go func() { s.udp.ShutdownContext(ctx); stopCh <- struct{}{} }()
 	go func() { s.tcp.ShutdownContext(ctx); stopCh <- struct{}{} }()
@@ -76,9 +85,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// handle executes a single DNS request/response exchange.
 func (s *Server) handle(ctx context.Context, w dns.ResponseWriter, req *dns.Msg) {
 	resp, hit, err := s.res.Resolve(ctx, req)
 	if err != nil {
+		// Preserve the original question with a SERVFAIL response.
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeServerFailure)
 		_ = w.WriteMsg(m)
@@ -86,16 +97,20 @@ func (s *Server) handle(ctx context.Context, w dns.ResponseWriter, req *dns.Msg)
 		s.logQueryAndTraffic(req, m, false)
 		return
 	}
+	// Write the successful response back to the client.
 	_ = w.WriteMsg(resp)
 	s.logQueryAndTraffic(req, resp, hit)
 }
 
+// logQueryAndTraffic emits per-query log lines and updates traffic counters.
 func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
 	totalQueries := s.requestCount.Add(1)
 	if s.metrics != nil {
+		// Mirror totals into the metrics sink if enabled.
 		s.metrics.RecordRequest()
 	}
 
+	// Pull out response metadata for structured logging.
 	answers := 0
 	authorities := 0
 	extra := 0
@@ -113,6 +128,7 @@ func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
 		s.log.Info("query", args...)
 	}
 
+	// Track ingress/egress bytes and log cumulative totals.
 	reqSize := uint64(req.Len())
 	respSize := uint64(0)
 	if resp != nil {
@@ -127,6 +143,8 @@ func (s *Server) logQueryAndTraffic(req, resp *dns.Msg, cacheHit bool) {
 	s.log.Info("cumulative traffic", "in_bytes", inTotal, "in_mib", fmt.Sprintf("%.3f", bytesToMiB(inTotal)), "in_gib", fmt.Sprintf("%.3f", bytesToGiB(inTotal)), "out_bytes", outTotal, "out_mib", fmt.Sprintf("%.3f", bytesToMiB(outTotal)), "out_gib", fmt.Sprintf("%.3f", bytesToGiB(outTotal)))
 }
 
+// bytesToMiB converts bytes to mebibytes.
 func bytesToMiB(v uint64) float64 { return float64(v) / (1024 * 1024) }
 
+// bytesToGiB converts bytes to gibibytes.
 func bytesToGiB(v uint64) float64 { return float64(v) / (1024 * 1024 * 1024) }

@@ -1,3 +1,5 @@
+// Package upstream defines abstractions and shared helpers for DNS upstream
+// protocols (DoH, DoT, DoQ, and plain DNS).
 package upstream
 
 import (
@@ -8,18 +10,26 @@ import (
 	"github.com/miekg/dns"
 )
 
+// ErrCircuitOpen signals that an upstream is in cooldown after failures.
 var ErrCircuitOpen = errors.New("upstream temporarily unavailable")
 
 // Upstream provides a unified interface for communicating with DNS upstreams.
 type Upstream interface {
-        ID() string
-        Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
-        Healthy() bool
-        Probe(ctx context.Context, msg *dns.Msg) error
-        RecordSuccess()
-        RecordFailure(err error)
+	// ID identifies the upstream instance for logging and metrics.
+	ID() string
+	// Exchange performs a DNS query against the upstream.
+	Exchange(ctx context.Context, msg *dns.Msg) (*dns.Msg, error)
+	// Healthy reports whether the upstream is currently eligible for use.
+	Healthy() bool
+	// Probe performs a lightweight health check query.
+	Probe(ctx context.Context, msg *dns.Msg) error
+	// RecordSuccess marks the upstream as healthy after a successful exchange.
+	RecordSuccess()
+	// RecordFailure updates failure counters and triggers backoff if needed.
+	RecordFailure(err error)
 }
 
+// healthState tracks failures and cooldown for a single upstream.
 type healthState struct {
 	maxFailures int
 	cooldown    time.Duration
@@ -38,6 +48,7 @@ func newHealthState(maxFailures int, cooldown time.Duration) healthState {
 	return healthState{maxFailures: maxFailures, cooldown: cooldown}
 }
 
+// healthy returns true when the upstream is usable or cooldown has expired.
 func (h *healthState) healthy() bool {
 	if h.backoffUntil.IsZero() {
 		return true
@@ -50,11 +61,13 @@ func (h *healthState) healthy() bool {
 	return false
 }
 
+// success resets failure counters after a successful exchange.
 func (h *healthState) success() {
 	h.failures = 0
 	h.backoffUntil = time.Time{}
 }
 
+// failure increments failure counters and applies cooldown after thresholds.
 func (h *healthState) failure() {
 	h.failures++
 	if h.failures >= h.maxFailures {

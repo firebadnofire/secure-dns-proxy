@@ -1,3 +1,5 @@
+// Package config defines the JSON configuration schema and default values used
+// by the proxy.
 package config
 
 import (
@@ -8,13 +10,14 @@ import (
 	"time"
 )
 
-// Duration unmarshals human-friendly duration strings (e.g. "5s") or numeric
-// nanoseconds from JSON.
-// It retains time.Duration semantics for arithmetic when converted with the
-// Duration() helper.
+// Duration is a thin wrapper so JSON can accept both quoted durations
+// ("5s", "1m") and raw nanoseconds.
+// It retains time.Duration semantics for arithmetic when converted with
+// Duration().
 type Duration time.Duration
 
 // UnmarshalJSON implements encoding/json unmarshalling for Duration.
+// It supports string durations first, then numeric nanoseconds as a fallback.
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	if len(b) == 0 {
 		return fmt.Errorf("empty duration")
@@ -44,104 +47,147 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return fmt.Errorf("invalid duration: %s", string(b))
 }
 
-// Duration converts the custom Duration type back to time.Duration.
+// Duration converts the custom Duration type back to time.Duration so other
+// packages can use standard time arithmetic.
 func (d Duration) Duration() time.Duration {
 	return time.Duration(d)
 }
 
 // Config describes the full runtime configuration for the proxy.
+// Each field maps to a JSON property in the config file.
 type Config struct {
-	BindAddress string           `json:"bind_address"`
-	Port        int              `json:"port"`
-	InsecureTLS bool             `json:"insecure_tls"`
-	Upstreams   []UpstreamConfig `json:"upstreams"`
+	// BindAddress/Port define where the DNS server listens.
+	BindAddress string `json:"bind_address"`
+	Port        int    `json:"port"`
+	// InsecureTLS disables TLS verification for upstreams (use with caution).
+	InsecureTLS bool `json:"insecure_tls"`
+	// Upstreams is the full list of resolver endpoints.
+	Upstreams []UpstreamConfig `json:"upstreams"`
 
-	UpstreamPolicy     string `json:"upstream_policy"`
-	UpstreamRaceFanout int    `json:"upstream_race_fanout"`
+	// UpstreamPolicy chooses the strategy for selecting upstreams.
+	UpstreamPolicy string `json:"upstream_policy"`
+	// UpstreamRaceFanout controls parallelism for the "race" policy.
+	UpstreamRaceFanout int `json:"upstream_race_fanout"`
 
+	// HealthChecks configures active probing of upstreams.
 	HealthChecks HealthCheckConfig `json:"health_checks"`
 
-	Cache        CacheConfig   `json:"cache"`
-	Pools        PoolConfig    `json:"pools"`
-	Timeouts     TimeoutConfig `json:"timeouts"`
-	RateLimit    RateLimit     `json:"rate_limit"`
-	Logging      LoggingConfig `json:"logging"`
-	Metrics      MetricsConfig `json:"metrics"`
-	PrewarmPools bool          `json:"prewarm_pools"`
+	// Cache controls DNS answer caching.
+	Cache CacheConfig `json:"cache"`
+	// Pools tunes connection reuse pools for upstream protocols.
+	Pools PoolConfig `json:"pools"`
+	// Timeouts applies to upstream dial/read operations.
+	Timeouts TimeoutConfig `json:"timeouts"`
+	// RateLimit caps concurrent upstream exchanges.
+	RateLimit RateLimit `json:"rate_limit"`
+	// Logging controls verbosity.
+	Logging LoggingConfig `json:"logging"`
+	// Metrics toggles instrumentation.
+	Metrics MetricsConfig `json:"metrics"`
+	// PrewarmPools determines whether connection pools prefill at startup.
+	PrewarmPools bool `json:"prewarm_pools"`
 }
 
-// UpstreamConfig describes a single upstream resolver.
+// UpstreamConfig describes a single upstream resolver endpoint.
 type UpstreamConfig struct {
-	URL         string   `json:"url"`
-	Bootstrap   string   `json:"bootstrap"`
-	MaxFailures int      `json:"max_failures"`
-	Cooldown    Duration `json:"cooldown"`
-	Weight      int      `json:"weight"`
+	// URL is the DoH/DoT/DoQ/plain DNS target.
+	URL string `json:"url"`
+	// Bootstrap is an optional override for hostname resolution.
+	Bootstrap string `json:"bootstrap"`
+	// MaxFailures defines failures before an upstream is marked unhealthy.
+	MaxFailures int `json:"max_failures"`
+	// Cooldown specifies how long to wait before retrying an unhealthy upstream.
+	Cooldown Duration `json:"cooldown"`
+	// Weight influences weighted selection policies.
+	Weight int `json:"weight"`
 }
 
 // HealthCheckConfig configures active health probing.
 // When enabled, upstream health state is driven by dedicated probes rather than
 // by regular query successes/failures.
 type HealthCheckConfig struct {
-	Enabled  bool     `json:"enabled"`
+	// Enabled toggles background probes.
+	Enabled bool `json:"enabled"`
+	// Interval sets how often probes run.
 	Interval Duration `json:"interval"`
-	Query    string   `json:"query"`
+	// Query is the DNS name used for probing.
+	Query string `json:"query"`
 }
 
 // CacheConfig tunes the TTL cache behavior.
 type CacheConfig struct {
-	Enabled          bool     `json:"enabled"`
-	Capacity         int      `json:"capacity"`
-	DefaultTTL       Duration `json:"default_ttl"`
-	NegativeTTL      Duration `json:"negative_ttl"`
-	RespectRecordTTL bool     `json:"respect_record_ttl"`
+	// Enabled toggles caching.
+	Enabled bool `json:"enabled"`
+	// Capacity limits stored entries.
+	Capacity int `json:"capacity"`
+	// DefaultTTL is applied to positive answers when record TTL is ignored.
+	DefaultTTL Duration `json:"default_ttl"`
+	// NegativeTTL is applied to NXDOMAIN responses.
+	NegativeTTL Duration `json:"negative_ttl"`
+	// RespectRecordTTL honors TTL values from upstream answers.
+	RespectRecordTTL bool `json:"respect_record_ttl"`
 }
 
 // PoolConfig tunes upstream connection reuse.
 type PoolConfig struct {
+	// TLS/QUIC pool sizes and idle timeouts for those protocols.
 	TLS  SizedPoolConfig `json:"tls"`
 	QUIC SizedPoolConfig `json:"quic"`
 
+	// HTTPTransport configures the underlying DoH HTTP client.
 	HTTPTransport HTTPTransportConfig `json:"http_transport"`
 }
 
 // SizedPoolConfig sets pool sizes and idle handling.
 type SizedPoolConfig struct {
-	Size        int      `json:"size"`
+	// Size is the maximum number of idle connections.
+	Size int `json:"size"`
+	// IdleTimeout evicts unused connections after the duration.
 	IdleTimeout Duration `json:"idle_timeout"`
 }
 
 // HTTPTransportConfig exposes knobs for the DoH client transport.
 type HTTPTransportConfig struct {
-	MaxIdleConns        int      `json:"max_idle_conns"`
-	MaxIdleConnsPerHost int      `json:"max_idle_conns_per_host"`
-	IdleConnTimeout     Duration `json:"idle_conn_timeout"`
+	// MaxIdleConns caps total idle connections.
+	MaxIdleConns int `json:"max_idle_conns"`
+	// MaxIdleConnsPerHost caps idle connections per upstream host.
+	MaxIdleConnsPerHost int `json:"max_idle_conns_per_host"`
+	// IdleConnTimeout evicts idle HTTP connections.
+	IdleConnTimeout Duration `json:"idle_conn_timeout"`
+	// TLSHandshakeTimeout bounds handshake duration.
 	TLSHandshakeTimeout Duration `json:"tls_handshake_timeout"`
 }
 
 // TimeoutConfig controls upstream interaction timeouts.
 type TimeoutConfig struct {
+	// Upstream is the overall timeout for an upstream exchange.
 	Upstream Duration `json:"upstream"`
-	Dial     Duration `json:"dial"`
-	Read     Duration `json:"read"`
+	// Dial bounds TCP/TLS/QUIC connection establishment.
+	Dial Duration `json:"dial"`
+	// Read bounds read operations on upstream sockets.
+	Read Duration `json:"read"`
 }
 
 // RateLimit caps simultaneous upstream exchanges.
 type RateLimit struct {
+	// MaxInFlight caps simultaneous upstream requests to avoid overload.
 	MaxInFlight int `json:"max_in_flight"`
 }
 
 // LoggingConfig exposes verbosity.
 type LoggingConfig struct {
+	// Level maps to the logging verbosity (info, debug, warn, ...).
 	Level string `json:"level"`
 }
 
 // MetricsConfig toggles instrumentation.
 type MetricsConfig struct {
+	// Enabled toggles Prometheus-style counters.
 	Enabled bool `json:"enabled"`
 }
 
 // Default returns a Config pre-populated with reasonable defaults.
+// These values mirror config.default.json for convenient programmatic usage.
 func Default() Config {
 	return Config{
 		BindAddress:        "127.0.0.35",
@@ -183,7 +229,8 @@ func Default() Config {
 	}
 }
 
-// Load parses configuration from JSON file paths. First existing path wins.
+// Load parses configuration from JSON file paths. First existing path wins,
+// otherwise defaults are returned.
 func Load(paths ...string) (Config, error) {
 	cfg := Default()
 	if len(paths) == 0 {

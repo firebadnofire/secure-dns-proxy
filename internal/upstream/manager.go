@@ -1,3 +1,4 @@
+// Package upstream implements DNS upstream protocols.
 package upstream
 
 import (
@@ -21,19 +22,28 @@ import (
 
 // Manager selects and orchestrates upstream exchanges.
 type Manager struct {
+	// upstreams holds the configured upstream resolvers.
 	upstreams []Upstream
-	policy    string
-	fanout    int
-	log       logging.Logger
-	metrics   *metrics.Metrics
+	// policy selects the strategy for picking upstreams.
+	policy string
+	// fanout configures how many upstreams to query in "race" mode.
+	fanout int
+	// log emits structured diagnostics.
+	log logging.Logger
+	// metrics records upstream success/failure counters.
+	metrics *metrics.Metrics
+	// rrCounter tracks the next upstream index for round robin.
 	rrCounter atomic.Uint64
 
-	healthCfg       config.HealthCheckConfig
+	// healthCfg configures background probing behavior.
+	healthCfg config.HealthCheckConfig
+	// upstreamTimeout bounds health probe duration.
 	upstreamTimeout time.Duration
 }
 
 // BuildManager constructs upstream clients and pools from config.
 func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metrics) (*Manager, *http.Client, error) {
+	// Shared HTTP transport for DoH upstreams.
 	transport := &http.Transport{
 		MaxIdleConns:        cfg.Pools.HTTPTransport.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Pools.HTTPTransport.MaxIdleConnsPerHost,
@@ -42,15 +52,18 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 	}
 	httpClient := &http.Client{Transport: transport}
 
+	// TLS config and dialer are shared across TLS/QUIC upstreams.
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
 	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
 
+	// Manager stores policy and health check configuration.
 	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics, healthCfg: cfg.HealthChecks, upstreamTimeout: cfg.Timeouts.Upstream.Duration()}
 
 	healthEnabled := cfg.HealthChecks.Enabled
 	trackTraffic := false
 
 	for _, upCfg := range cfg.Upstreams {
+		// Build each upstream according to its scheme.
 		u, err := buildUpstream(upCfg, cfg, httpClient, dialer, tlsConfig, log, metrics, trackTraffic, healthEnabled)
 		if err != nil {
 			return nil, nil, err
@@ -61,6 +74,7 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 	return mgr, httpClient, nil
 }
 
+// buildUpstream parses the upstream URL and returns a concrete upstream type.
 func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *http.Client, dialer *net.Dialer, tlsConf *tls.Config, log logging.Logger, metrics *metrics.Metrics, trackTraffic bool, healthEnabled bool) (Upstream, error) {
 	target := upCfg.URL
 	if !strings.Contains(target, "://") {
@@ -72,18 +86,22 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 	}
 	switch parsed.Scheme {
 	case "dns":
+		// Plain DNS defaults to port 53.
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "53")
 		}
 		return NewPlainDNS(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, cfg.Timeouts.Upstream.Duration(), trackTraffic, healthEnabled), nil
 	case "https":
+		// DNS-over-HTTPS uses shared HTTP client.
 		return NewDoH(upCfg, httpClient, trackTraffic, healthEnabled), nil
 	case "tls":
+		// DNS-over-TLS defaults to port 853.
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "853")
 		}
+		// TLS pools reuse encrypted connections.
 		factory := MakeTLSFactory(addr, tlsConf, dialer)
 		tlsPool := pool.NewTLSConnPool(cfg.Pools.TLS.Size, cfg.Pools.TLS.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
@@ -91,6 +109,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		}
 		return NewDoT(config.UpstreamConfig{URL: addr, MaxFailures: upCfg.MaxFailures, Cooldown: upCfg.Cooldown}, tlsPool, trackTraffic, healthEnabled), nil
 	case "quic":
+		// DNS-over-QUIC defaults to port 784.
 		addr := parsed.Host
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "784")
@@ -104,6 +123,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if quicTLS.ServerName == "" {
 			quicTLS.ServerName = host
 		}
+		// QUIC pools reuse connections and enable 0-RTT when possible.
 		factory := MakeQUICFactory(addr, quicTLS, dialer)
 		quicPool := pool.NewQUICConnPool(cfg.Pools.QUIC.Size, cfg.Pools.QUIC.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
@@ -127,6 +147,7 @@ func (m *Manager) Resolve(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	}
 }
 
+// sequential tries each upstream in order until one succeeds.
 func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	var lastErr error
 	for _, up := range m.upstreams {
@@ -151,6 +172,7 @@ func (m *Manager) sequential(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 	return nil, lastErr
 }
 
+// roundRobin cycles through upstreams, skipping unhealthy ones.
 func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if len(m.upstreams) == 0 {
 		return nil, fmt.Errorf("no upstreams configured")
@@ -176,6 +198,7 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 	return nil, fmt.Errorf("no healthy upstreams")
 }
 
+// race issues concurrent requests to multiple upstreams and returns the first success.
 func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	if len(m.upstreams) == 0 {
 		return nil, fmt.Errorf("no upstreams configured")
@@ -193,6 +216,7 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	defer cancel()
 
 	for i := 0; i < fanout; i++ {
+		// Round robin index ensures varied fanout across requests.
 		up := m.upstreams[(int(m.rrCounter.Add(1))+i)%len(m.upstreams)]
 		if !up.Healthy() {
 			continue
@@ -258,6 +282,7 @@ func (m *Manager) StartHealthChecks(ctx context.Context) {
 	}()
 }
 
+// dispatchHealthChecks fires a probe for each upstream.
 func (m *Manager) dispatchHealthChecks(ctx context.Context, tmpl *dns.Msg) {
 	for _, up := range m.upstreams {
 		probe := tmpl.Copy()

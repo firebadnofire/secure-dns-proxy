@@ -1,3 +1,5 @@
+// Package logging provides a small wrapper around slog with a simplified
+// interface used throughout the proxy.
 package logging
 
 import (
@@ -25,17 +27,20 @@ const (
 )
 
 // StructuredLogger wraps slog.Logger for simple use throughout the codebase.
+// It also tracks the configured level for cheaper debug checks.
 type StructuredLogger struct {
 	logger *slog.Logger
 	level  slog.Level
 }
 
+// default logger is lazily initialized to avoid global init side effects.
 var (
 	defaultOnce sync.Once
 	defaultLog  Logger
 )
 
 // New returns a StructuredLogger honoring the provided level.
+// The logger emits text logs to stdout.
 func New(level Level) Logger {
 	l := slog.LevelInfo
 	switch level {
@@ -60,10 +65,12 @@ func Default() Logger {
 	return defaultLog
 }
 
+// Info/Warn/Error proxy to the underlying slog.Logger.
 func (s *StructuredLogger) Info(msg string, args ...any)  { s.logger.Info(msg, args...) }
 func (s *StructuredLogger) Warn(msg string, args ...any)  { s.logger.Warn(msg, args...) }
 func (s *StructuredLogger) Error(msg string, args ...any) { s.logger.Error(msg, args...) }
 func (s *StructuredLogger) Debug(msg string, args ...any) {
+	// Debug is guarded so we avoid string formatting when debug is disabled.
 	if s.level <= slog.LevelDebug {
 		s.logger.Debug(msg, args...)
 	}
