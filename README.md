@@ -9,7 +9,7 @@
 - Shared HTTP transport for DoH keep-alives
 - Positive and negative TTL caching with request coalescing
 - Rate limiting/backpressure to cap concurrent upstream work
-- Active health probes (root query every 120s by default) keep health independent of live traffic; can be disabled to treat all upstreams as available
+- Active health probes (root query every 120s by default) keep health independent of live traffic and warn on failures out of the box
 - Structured logging and lightweight internal metrics hooks
 - EDNS0 support with sane defaults
 
@@ -115,7 +115,14 @@ sudo make deinstall
   "health_checks": {
     "enabled": true,
     "interval": "120s",
-    "query": "."
+    "query": ".",
+    "on_failure": {
+      "policy": "warn",
+      "script": "",
+      "args": [],
+      "cooldown": "5m",
+      "notify_title": "secure-dns-proxy"
+    }
   }
 }
 ```
@@ -130,7 +137,7 @@ sudo make deinstall
 - **DoQ correctness:** requests close the write side only after sending, then read the response before closing the stream.
 - **Timeout hygiene:** timeouts are enforced via contexts without leaking deadlines onto pooled connections.
 - **Caching & coalescing:** identical in-flight queries collapse to one upstream call; responses populate positive/negative TTL caches per RFC 2308.
-- **Health & policy:** upstreams are driven by dedicated health probes (on by default) instead of live query traffic; disabling health checks treats all upstreams as available. Round-robin, sequential, and race policies balance resiliency and latency.
+- **Health & policy:** upstreams are driven by dedicated health probes (on by default) instead of live query traffic; disabling health checks treats all upstreams as available. `health_checks.on_failure.policy` supports `warn`, `restart`, `execute_script`, and `desktop_notify` (with per-upstream cooldown). The `restart` action exits with status code `1` so an external supervisor can relaunch the service.
 - **Backpressure:** a limiter caps concurrent upstream work to prevent dial storms during spikes.
 - **Logging:** only state changes and errors are logged; verbosity is configurable.
 

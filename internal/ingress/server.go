@@ -3,11 +3,11 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"sync/atomic"
-	"time"
 
 	"github.com/miekg/dns"
 
@@ -52,13 +52,26 @@ func New(bindAddr string, port int, res *resolver.Resolver, log logging.Logger, 
 
 // Start launches UDP and TCP listeners.
 func (s *Server) Start() error {
+	udpConn, err := net.ListenPacket("udp", s.udp.Addr)
+	if err != nil {
+		return fmt.Errorf("listen udp %s: %w", s.udp.Addr, err)
+	}
+	tcpListener, err := net.Listen("tcp", s.tcp.Addr)
+	if err != nil {
+		_ = udpConn.Close()
+		return fmt.Errorf("listen tcp %s: %w", s.tcp.Addr, err)
+	}
+
+	s.udp.PacketConn = udpConn
+	s.tcp.Listener = tcpListener
+
 	go func() {
-		if err := s.udp.ListenAndServe(); err != nil {
+		if err := s.udp.ActivateAndServe(); err != nil {
 			s.log.Error("udp server stopped", "error", err)
 		}
 	}()
 	go func() {
-		if err := s.tcp.ListenAndServe(); err != nil {
+		if err := s.tcp.ActivateAndServe(); err != nil {
 			s.log.Error("tcp server stopped", "error", err)
 		}
 	}()
@@ -68,21 +81,22 @@ func (s *Server) Start() error {
 // Shutdown gracefully stops listeners.
 func (s *Server) Shutdown(ctx context.Context) error {
 	// Shutdown both servers concurrently and wait for both to return.
-	stopCh := make(chan struct{}, 2)
-	go func() { s.udp.ShutdownContext(ctx); stopCh <- struct{}{} }()
-	go func() { s.tcp.ShutdownContext(ctx); stopCh <- struct{}{} }()
+	stopCh := make(chan error, 2)
+	go func() { stopCh <- s.udp.ShutdownContext(ctx) }()
+	go func() { stopCh <- s.tcp.ShutdownContext(ctx) }()
 
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
-
+	var shutdownErr error
 	for i := 0; i < 2; i++ {
 		select {
-		case <-stopCh:
-		case <-timer.C:
-			return ctx.Err()
+		case err := <-stopCh:
+			if err != nil {
+				shutdownErr = errors.Join(shutdownErr, err)
+			}
+		case <-ctx.Done():
+			return errors.Join(shutdownErr, ctx.Err())
 		}
 	}
-	return nil
+	return shutdownErr
 }
 
 // handle executes a single DNS request/response exchange.

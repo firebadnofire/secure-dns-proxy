@@ -5,6 +5,7 @@ package upstream
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -31,6 +32,8 @@ type Upstream interface {
 
 // healthState tracks failures and cooldown for a single upstream.
 type healthState struct {
+	mu sync.Mutex
+
 	maxFailures int
 	cooldown    time.Duration
 
@@ -50,6 +53,9 @@ func newHealthState(maxFailures int, cooldown time.Duration) healthState {
 
 // healthy returns true when the upstream is usable or cooldown has expired.
 func (h *healthState) healthy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	if h.backoffUntil.IsZero() {
 		return true
 	}
@@ -63,12 +69,18 @@ func (h *healthState) healthy() bool {
 
 // success resets failure counters after a successful exchange.
 func (h *healthState) success() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	h.failures = 0
 	h.backoffUntil = time.Time{}
 }
 
 // failure increments failure counters and applies cooldown after thresholds.
 func (h *healthState) failure() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	h.failures++
 	if h.failures >= h.maxFailures {
 		h.backoffUntil = time.Now().Add(h.cooldown)

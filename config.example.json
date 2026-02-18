@@ -38,6 +38,13 @@
   "health_checks": {
     "enabled": true,
     "interval": "120s",
-    "query": "."
+    "query": ".",
+    "on_failure": {
+      "policy": "warn",
+      "script": "",
+      "args": [],
+      "cooldown": "5m",
+      "notify_title": "secure-dns-proxy"
+    }
   }
 }

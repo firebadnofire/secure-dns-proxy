@@ -3,6 +3,7 @@
 package cache
 
 import (
+	"container/list"
 	"context"
 	"sync"
 	"time"
@@ -21,6 +22,8 @@ type entry struct {
 	expires time.Time
 	// negative tracks NXDOMAIN-like responses for TTL calculation.
 	negative bool
+	// node points to the key in FIFO order list for O(1) eviction/removal.
+	node *list.Element
 }
 
 // Cache implements TTL-based positive and negative caching with request
@@ -31,8 +34,8 @@ type Cache struct {
 
 	// mu protects entries and eviction order.
 	mu      sync.Mutex
-	entries map[string]entry
-	order   []string
+	entries map[string]*entry
+	order   *list.List
 
 	// group coalesces concurrent requests for the same key.
 	group singleflight.Group
@@ -43,7 +46,7 @@ func New(cfg config.CacheConfig) *Cache {
 	if cfg.Capacity <= 0 {
 		cfg.Capacity = 1
 	}
-	return &Cache{cfg: cfg, entries: make(map[string]entry)}
+	return &Cache{cfg: cfg, entries: make(map[string]*entry), order: list.New()}
 }
 
 // UpdateConfig applies the provided configuration without clearing cache entries.
@@ -56,19 +59,9 @@ func (c *Cache) UpdateConfig(cfg config.CacheConfig) {
 	defer c.mu.Unlock()
 
 	c.cfg = cfg
-	if len(c.entries) <= c.cfg.Capacity {
-		return
+	for len(c.entries) > c.cfg.Capacity {
+		c.evictOldestLocked()
 	}
-
-	excess := len(c.entries) - c.cfg.Capacity
-	if excess > len(c.order) {
-		excess = len(c.order)
-	}
-	for i := 0; i < excess; i++ {
-		key := c.order[i]
-		delete(c.entries, key)
-	}
-	c.order = c.order[excess:]
 }
 
 // KeyFromQuestion returns a stable cache key for the DNS question.
@@ -90,6 +83,9 @@ func (c *Cache) Get(key string) (*dns.Msg, bool) {
 		return nil, false
 	}
 	if time.Now().After(ent.expires) {
+		if ent.node != nil {
+			c.order.Remove(ent.node)
+		}
 		delete(c.entries, key)
 		return nil, false
 	}
@@ -104,15 +100,19 @@ func (c *Cache) Set(key string, msg *dns.Msg, ttl time.Duration, negative bool) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if len(c.entries) >= c.cfg.Capacity {
-		// simple FIFO eviction to limit state
-		oldestKey := c.order[0]
-		c.order = c.order[1:]
-		delete(c.entries, oldestKey)
+	if existing, ok := c.entries[key]; ok {
+		// Keep FIFO position for updates; only refresh payload and expiry.
+		existing.msg = msg.Copy()
+		existing.expires = time.Now().Add(ttl)
+		existing.negative = negative
+		return
 	}
 
-	c.entries[key] = entry{msg: msg.Copy(), expires: time.Now().Add(ttl), negative: negative}
-	c.order = append(c.order, key)
+	for len(c.entries) >= c.cfg.Capacity {
+		c.evictOldestLocked()
+	}
+	node := c.order.PushBack(key)
+	c.entries[key] = &entry{msg: msg.Copy(), expires: time.Now().Add(ttl), negative: negative, node: node}
 }
 
 // Fetch returns a cached response or executes the loader once for concurrent
@@ -173,4 +173,14 @@ func minTTL(rrs []dns.RR) uint32 {
 		}
 	}
 	return ttl
+}
+
+func (c *Cache) evictOldestLocked() {
+	oldest := c.order.Front()
+	if oldest == nil {
+		return
+	}
+	key, _ := oldest.Value.(string)
+	c.order.Remove(oldest)
+	delete(c.entries, key)
 }

@@ -112,6 +112,23 @@ type HealthCheckConfig struct {
 	Interval Duration `json:"interval"`
 	// Query is the DNS name used for probing.
 	Query string `json:"query"`
+	// OnFailure configures optional actions when probes keep failing.
+	OnFailure HealthFailActionConfig `json:"on_failure"`
+}
+
+// HealthFailActionConfig controls what happens after sustained probe failures.
+// The default policy is "warn", which only emits warnings.
+type HealthFailActionConfig struct {
+	// Policy chooses the action: warn (default), restart, execute_script, desktop_notify.
+	Policy string `json:"policy"`
+	// Script is required when policy is execute_script.
+	Script string `json:"script"`
+	// Args are optional arguments for the script command.
+	Args []string `json:"args"`
+	// Cooldown throttles repeated actions per upstream.
+	Cooldown Duration `json:"cooldown"`
+	// NotifyTitle sets the title used by desktop notifications.
+	NotifyTitle string `json:"notify_title"`
 }
 
 // CacheConfig tunes the TTL cache behavior.
@@ -199,6 +216,11 @@ func Default() Config {
 			Enabled:  true,
 			Interval: Duration(120 * time.Second),
 			Query:    ".",
+			OnFailure: HealthFailActionConfig{
+				Policy:      "warn",
+				Cooldown:    Duration(5 * time.Minute),
+				NotifyTitle: "secure-dns-proxy",
+			},
 		},
 		Cache: CacheConfig{
 			Enabled:          true,
