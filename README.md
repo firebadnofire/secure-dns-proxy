@@ -84,7 +84,7 @@ sudo make deinstall
   "upstreams": [
     {"url": "https://doh.archuser.org/dns-query"},
     {"url": "tls://doh.archuser.org:853"},
-    {"url": "quic://doh.archuser.org:853"}
+    {"url": "quic://dns.adguard-dns.com:853"}
   ],
   "cache": {
     "enabled": true,
