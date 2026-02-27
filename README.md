@@ -61,7 +61,7 @@ Enable/start the unit after installation:
 sudo systemctl enable --now secure-dns-proxy.service
 ```
 
-The service unit requests `CAP_NET_BIND_SERVICE` and `CAP_NET_ADMIN`, allows unlimited memlock, and ships a sysctl drop-in that raises `net.core.rmem_max`/`net.core.rmem_default` to 8 MiB to satisfy QUIC receive buffer sizing guidance. If you prefer different values, adjust `/etc/sysctl.d/80-secure-dns-proxy.conf` and reload via `sudo sysctl --system`.
+The service unit requests `CAP_NET_BIND_SERVICE` and `CAP_NET_ADMIN`, allows unlimited memlock, and ships a sysctl drop-in that raises `net.core.rmem_max`/`net.core.rmem_default` and `net.core.wmem_max`/`net.core.wmem_default` to 8 MiB to satisfy QUIC UDP buffer sizing guidance. If you prefer different values, adjust `/etc/sysctl.d/80-secure-dns-proxy.conf` and reload via `sudo sysctl --system`.
 
 On each restart the systemd unit clears `/run/secure-dns-proxy` to flush any cached runtime state before the process starts.
 

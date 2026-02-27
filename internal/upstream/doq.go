@@ -4,6 +4,8 @@ package upstream
 import (
 	"context"
 	"crypto/tls"
+	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -88,13 +90,11 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		}
 		return nil, err
 	}
-
-	payload, err := msg.Pack()
-	if err != nil {
-		releaseOnce(err)
-		return nil, err
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = stream.SetDeadline(deadline)
 	}
-	if _, err := stream.Write(payload); err != nil {
+
+	if err := writeDoQMessage(stream, msg); err != nil {
 		// Cancel write to unblock the peer if write fails.
 		stream.CancelWrite(0)
 		releaseOnce(err)
@@ -113,17 +113,9 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		return nil, err
 	}
 
-	respBuf, err := io.ReadAll(stream)
+	response, err := readDoQMessage(stream)
 	releaseOnce(err)
 	if err != nil {
-		if recordHealth {
-			d.RecordFailure(err)
-		}
-		return nil, err
-	}
-
-	response := new(dns.Msg)
-	if err := response.Unpack(respBuf); err != nil {
 		if recordHealth {
 			d.RecordFailure(err)
 		}
@@ -133,6 +125,50 @@ func (d *DoQ) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 		d.RecordSuccess()
 	}
 	return response, nil
+}
+
+// writeDoQMessage serializes DNS payload with the RFC 9250 2-byte length prefix.
+func writeDoQMessage(w io.Writer, msg *dns.Msg) error {
+	payload, err := msg.Pack()
+	if err != nil {
+		return err
+	}
+	if len(payload) == 0 {
+		return fmt.Errorf("doq message cannot be empty")
+	}
+	if len(payload) > 0xffff {
+		return fmt.Errorf("doq message too large: %d bytes", len(payload))
+	}
+
+	var hdr [2]byte
+	binary.BigEndian.PutUint16(hdr[:], uint16(len(payload)))
+	if _, err := w.Write(hdr[:]); err != nil {
+		return err
+	}
+	_, err = w.Write(payload)
+	return err
+}
+
+// readDoQMessage reads a single RFC 9250 length-prefixed DNS message.
+func readDoQMessage(r io.Reader) (*dns.Msg, error) {
+	var hdr [2]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return nil, err
+	}
+	size := int(binary.BigEndian.Uint16(hdr[:]))
+	if size == 0 {
+		return nil, fmt.Errorf("doq frame length is zero")
+	}
+
+	buf := make([]byte, size)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	resp := new(dns.Msg)
+	if err := resp.Unpack(buf); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // MakeQUICFactory constructs a QUIC dialer suitable for pooling.
