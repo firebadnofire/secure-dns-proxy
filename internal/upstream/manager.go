@@ -178,6 +178,7 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 		return nil, fmt.Errorf("no upstreams configured")
 	}
 	start := int(m.rrCounter.Add(1) % uint64(len(m.upstreams)))
+	var lastErr error
 	for i := 0; i < len(m.upstreams); i++ {
 		idx := (start + i) % len(m.upstreams)
 		up := m.upstreams[idx]
@@ -194,6 +195,10 @@ func (m *Manager) roundRobin(ctx context.Context, msg *dns.Msg) (*dns.Msg, error
 		if m.metrics != nil {
 			m.metrics.RecordFailure()
 		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
 	}
 	return nil, fmt.Errorf("no healthy upstreams")
 }
@@ -215,20 +220,26 @@ func (m *Manager) race(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	for i := 0; i < fanout; i++ {
-		// Round robin index ensures varied fanout across requests.
-		up := m.upstreams[(int(m.rrCounter.Add(1))+i)%len(m.upstreams)]
+	start := int(m.rrCounter.Add(1) % uint64(len(m.upstreams)))
+	launched := 0
+	for i := 0; i < len(m.upstreams) && launched < fanout; i++ {
+		idx := (start + i) % len(m.upstreams)
+		up := m.upstreams[idx]
 		if !up.Healthy() {
 			continue
 		}
+		launched++
 		go func(u Upstream) {
 			resp, err := u.Exchange(ctx, msg)
 			resCh <- result{resp: resp, err: err}
 		}(up)
 	}
+	if launched == 0 {
+		return nil, fmt.Errorf("no healthy upstreams")
+	}
 
 	var lastErr error
-	for i := 0; i < fanout; i++ {
+	for i := 0; i < launched; i++ {
 		select {
 		case r := <-resCh:
 			if r.err == nil && r.resp != nil {
