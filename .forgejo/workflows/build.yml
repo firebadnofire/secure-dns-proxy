@@ -1,0 +1,415 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "V*"
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:22.04
+      options: --network ci-network
+
+    steps:
+      - name: Install release dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apt_get="apt-get"
+          if command -v sudo >/dev/null 2>&1; then
+            apt_get="sudo apt-get"
+          fi
+
+          $apt_get update
+          $apt_get install -y --no-install-recommends ca-certificates curl git jq make tar
+
+      - name: Check out repository
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: |
+          set -euo pipefail
+
+          server_url="${FORGEJO_SERVER_URL:-${GITHUB_SERVER_URL:?Missing Forgejo server URL}}"
+          repository="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:?Missing repository name}}"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
+          token="${FORGEJO_TOKEN:-${GITHUB_TOKEN:?Missing Forgejo token}}"
+          repo_dir="${RUNNER_TEMP:-/tmp}/secure-dns-proxy"
+          remote_url="${server_url}/${repository}.git"
+          auth_header="$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"
+
+          rm -rf "$repo_dir"
+          git -c "http.${server_url}/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            clone "$remote_url" "$repo_dir"
+          git -C "$repo_dir" -c "http.${server_url}/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git -C "$repo_dir" checkout --detach "refs/tags/${tag}"
+
+          printf 'REPO_DIR=%s\n' "$repo_dir" >> "$GITHUB_ENV"
+
+      - name: Install Go toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          go_version="1.24.3"
+          go_tarball="go${go_version}.linux-amd64.tar.gz"
+          go_url="https://dl.google.com/go/${go_tarball}"
+          go_sha256="3333f6ea53afa971e9078895eaa4ac7204a8c6b5c68c10e6bc9a33e8e391bdd8"
+          tool_dir="${RUNNER_TEMP:-/tmp}/go-toolchain"
+
+          rm -rf "$tool_dir"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location "$go_url" --output "${tool_dir}/${go_tarball}"
+          printf '%s  %s\n' "$go_sha256" "${tool_dir}/${go_tarball}" | sha256sum --check --status
+          tar -C "$tool_dir" -xzf "${tool_dir}/${go_tarball}"
+
+          printf '%s\n' "${tool_dir}/go/bin" >> "$GITHUB_PATH"
+          "${tool_dir}/go/bin/go" version
+
+      - name: Validate release inputs
+        shell: bash
+        env:
+          GH_KEY: ${{ secrets.GH_KEY }}
+        run: |
+          set -euo pipefail
+
+          for name in GH_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required secret: ${name}" >&2
+              if [ "$name" = "GH_KEY" ]; then
+                echo "GH_KEY must be available to this repository's workflow." >&2
+                echo "For an owner/organization repository, add it under the repository or owner/organization Actions secrets, not only under personal user settings." >&2
+              fi
+              exit 1
+            fi
+          done
+
+          for tool in base64 curl git go jq make sha256sum tar; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "Missing required tool: ${tool}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Build Linux release tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${REPO_DIR:?Missing repository checkout directory}"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 make package VERSION="$tag"
+
+      - name: Prepare release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "${REPO_DIR:?Missing repository checkout directory}"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
+          asset_path="dist/secure-dns-proxy-${tag}.tar.gz"
+
+          if [ ! -f "$asset_path" ]; then
+            echo "Expected release tarball at ${asset_path}." >&2
+            exit 1
+          fi
+
+          tar -tzf "$asset_path" >/dev/null
+          printf 'ASSET_PATH=%s\n' "${REPO_DIR}/${asset_path}" >> "$GITHUB_ENV"
+
+      - name: Publish Forgejo release
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: |
+          set -euo pipefail
+
+          api_url="${FORGEJO_API_URL:-${GITHUB_API_URL:?Missing Forgejo API URL}}"
+          repository="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:?Missing repository name}}"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
+          token="${FORGEJO_TOKEN:-${GITHUB_TOKEN:?Missing Forgejo token}}"
+          owner="${repository%%/*}"
+          repo="${repository#*/}"
+          asset_path="${ASSET_PATH:?Missing release asset path}"
+          release_name="secure-dns-proxy ${tag}"
+          release_body="Automated Linux tarball release for ${tag}."
+
+          api_request() {
+            local method="$1"
+            local url="$2"
+            shift 2
+            curl --fail-with-body --silent --show-error \
+              --request "$method" \
+              --header "Authorization: token ${token}" \
+              "$@" \
+              "$url"
+          }
+
+          release_response="$(mktemp)"
+          release_status="$(curl --silent --show-error \
+            --output "$release_response" \
+            --write-out "%{http_code}" \
+            --header "Authorization: token ${token}" \
+            "${api_url}/repos/${owner}/${repo}/releases/tags/${tag}")"
+
+          if [ "$release_status" = "404" ]; then
+            release_payload="$(jq -n \
+              --arg tag "$tag" \
+              --arg name "$release_name" \
+              --arg body "$release_body" \
+              '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, hide_archive_links: false}')"
+            release_json="$(api_request POST "${api_url}/repos/${owner}/${repo}/releases" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          elif [ "$release_status" = "200" ]; then
+            release_json="$(cat "$release_response")"
+            release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+            release_payload="$(jq -n \
+              --arg tag "$tag" \
+              --arg name "$release_name" \
+              --arg body "$release_body" \
+              '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, hide_archive_links: false}')"
+            release_json="$(api_request PATCH "${api_url}/repos/${owner}/${repo}/releases/${release_id}" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          else
+            cat "$release_response" >&2
+            echo "Failed to look up release for ${tag}: HTTP ${release_status}" >&2
+            exit 1
+          fi
+
+          release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "Release response did not include an id." >&2
+            exit 1
+          fi
+
+          asset_name="$(basename "$asset_path")"
+          asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+          existing_asset_id="$(api_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+            | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+            | head -n 1)"
+
+          if [ -n "$existing_asset_id" ]; then
+            api_request DELETE "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets/${existing_asset_id}" >/dev/null
+          fi
+
+          api_request POST "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+            --form "attachment=@${asset_path}" >/dev/null
+
+      - name: Migrate repository to GitHub
+        shell: bash
+        env:
+          GH_KEY: ${{ secrets.GH_KEY }}
+        run: |
+          set -euo pipefail
+
+          cd "${REPO_DIR:?Missing repository checkout directory}"
+          api_url="https://api.github.com"
+          owner="firebadnofire"
+          repo="secure-dns-proxy"
+          token="${GH_KEY:?Missing GitHub token}"
+
+          github_api_request() {
+            local method="$1"
+            local url="$2"
+            local response_file
+            local status
+            shift 2
+            response_file="$(mktemp)"
+            status="$(curl --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request "$method" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$@" \
+              "$url")"
+            if [ "$status" -lt 200 ] || [ "$status" -gt 299 ]; then
+              cat "$response_file" >&2
+              echo "GitHub API request failed: ${method} ${url} returned HTTP ${status}" >&2
+              exit 1
+            fi
+            cat "$response_file"
+          }
+
+          github_repo_status() {
+            local response_file
+            response_file="$(mktemp)"
+            curl --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "${api_url}/repos/${owner}/${repo}"
+          }
+
+          github_git_push() {
+            local remote_url="https://github.com/${owner}/${repo}.git"
+            local auth_header
+            auth_header="$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"
+            git -c "http.${remote_url}.extraheader=AUTHORIZATION: basic ${auth_header}" \
+              push "$remote_url" "$@"
+          }
+
+          github_migrate() {
+            local repo_status
+            local owner_json
+            local owner_type
+            local create_payload
+            local branch_refspecs=()
+            local ref_name
+            local short_name
+
+            repo_status="$(github_repo_status)"
+            if [ "$repo_status" = "404" ]; then
+              owner_json="$(github_api_request GET "${api_url}/users/${owner}")"
+              owner_type="$(printf '%s' "$owner_json" | jq -r '.type')"
+              create_payload="$(jq -n \
+                --arg name "$repo" \
+                --arg description "secure-dns-proxy mirror" \
+                '{name: $name, description: $description, private: false, auto_init: false}')"
+
+              if [ "$owner_type" = "Organization" ]; then
+                github_api_request POST "${api_url}/orgs/${owner}/repos" \
+                  --header "Content-Type: application/json" \
+                  --data "$create_payload" >/dev/null
+              elif [ "$owner_type" = "User" ]; then
+                authenticated_login="$(github_api_request GET "${api_url}/user" | jq -r '.login')"
+                if [ "$authenticated_login" != "$owner" ]; then
+                  echo "Cannot create ${owner}/${repo}: GH_KEY authenticates as ${authenticated_login}, not ${owner}." >&2
+                  exit 1
+                fi
+                github_api_request POST "${api_url}/user/repos" \
+                  --header "Content-Type: application/json" \
+                  --data "$create_payload" >/dev/null
+              else
+                echo "Unsupported GitHub owner type for ${owner}: ${owner_type}" >&2
+                exit 1
+              fi
+            elif [ "$repo_status" != "200" ]; then
+              echo "Failed to check GitHub repository ${owner}/${repo}: HTTP ${repo_status}" >&2
+              exit 1
+            fi
+
+            while read -r ref_name short_name; do
+              short_name="${short_name#origin/}"
+              if [ "$short_name" = "HEAD" ]; then
+                continue
+              fi
+              branch_refspecs+=("${ref_name}:refs/heads/${short_name}")
+            done < <(git for-each-ref --format='%(refname) %(refname:short)' refs/remotes/origin)
+
+            if [ "${#branch_refspecs[@]}" -gt 0 ]; then
+              github_git_push "${branch_refspecs[@]}"
+            else
+              echo "No remote branches were found to migrate." >&2
+              exit 1
+            fi
+
+            github_git_push "refs/tags/*:refs/tags/*"
+          }
+
+          github_migrate
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_KEY: ${{ secrets.GH_KEY }}
+        run: |
+          set -euo pipefail
+
+          api_url="https://api.github.com"
+          upload_url="https://uploads.github.com"
+          owner="firebadnofire"
+          repo="secure-dns-proxy"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
+          token="${GH_KEY:?Missing GitHub token}"
+          asset_path="${ASSET_PATH:?Missing release asset path}"
+          asset_name="$(basename "$asset_path")"
+          asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+          release_name="secure-dns-proxy ${tag}"
+          release_body="Automated Linux tarball release for ${tag}."
+
+          github_request() {
+            local method="$1"
+            local url="$2"
+            local response_file
+            local status
+            shift 2
+            response_file="$(mktemp)"
+            status="$(curl --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request "$method" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$@" \
+              "$url")"
+            if [ "$status" -lt 200 ] || [ "$status" -gt 299 ]; then
+              cat "$response_file" >&2
+              echo "GitHub API request failed: ${method} ${url} returned HTTP ${status}" >&2
+              exit 1
+            fi
+            cat "$response_file"
+          }
+
+          release_response="$(mktemp)"
+          release_status="$(curl --silent --show-error \
+            --output "$release_response" \
+            --write-out "%{http_code}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${token}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${api_url}/repos/${owner}/${repo}/releases/tags/${tag}")"
+
+          if [ "$release_status" = "404" ]; then
+            release_payload="$(jq -n \
+              --arg tag "$tag" \
+              --arg name "$release_name" \
+              --arg body "$release_body" \
+              '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}')"
+            release_json="$(github_request POST "${api_url}/repos/${owner}/${repo}/releases" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          elif [ "$release_status" = "200" ]; then
+            release_json="$(cat "$release_response")"
+            release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+            release_payload="$(jq -n \
+              --arg tag "$tag" \
+              --arg name "$release_name" \
+              --arg body "$release_body" \
+              '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}')"
+            release_json="$(github_request PATCH "${api_url}/repos/${owner}/${repo}/releases/${release_id}" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          else
+            cat "$release_response" >&2
+            echo "Failed to look up GitHub release for ${tag}: HTTP ${release_status}" >&2
+            exit 1
+          fi
+
+          release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "GitHub release response did not include an id." >&2
+            exit 1
+          fi
+
+          existing_asset_id="$(github_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+            | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+            | head -n 1)"
+
+          if [ -n "$existing_asset_id" ]; then
+            github_request DELETE "${api_url}/repos/${owner}/${repo}/releases/assets/${existing_asset_id}" >/dev/null
+          fi
+
+          github_request POST "${upload_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+            --header "Content-Type: application/gzip" \
+            --data-binary "@${asset_path}" >/dev/null

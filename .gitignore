@@ -13,7 +13,8 @@ etc
 dist
 # Test binary, built with `go test -c`
 *.test
-
+.tmp
+build
 logs/
 
 # Output of the go coverage tool, specifically when used with LiteIDE
