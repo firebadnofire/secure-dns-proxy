@@ -20,9 +20,16 @@ jobs:
           set -euo pipefail
 
           apt_get="apt-get"
+          tee_cmd="tee"
           if command -v sudo >/dev/null 2>&1; then
             apt_get="sudo apt-get"
+            tee_cmd="sudo tee"
           fi
+
+          {
+            echo 'Acquire::http::Proxy "http://apt-cacher-ng:3142";'
+            echo 'Acquire::https::Proxy "http://apt-cacher-ng:3142";'
+          } | $tee_cmd /etc/apt/apt.conf.d/01proxy >/dev/null
 
           $apt_get update
           $apt_get install -y --no-install-recommends ca-certificates curl git jq make tar
