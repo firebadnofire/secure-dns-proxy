@@ -131,16 +131,18 @@ jobs:
 
           : > "$assets_file"
           for asset_path in "${asset_paths[@]}"; do
+            archive_listing="$(mktemp)"
             if [ ! -f "$asset_path" ]; then
               echo "Expected release tarball at ${asset_path}." >&2
               exit 1
             fi
 
-            tar -tzf "$asset_path" >/dev/null
-            tar -tzf "$asset_path" | grep -qx 'secure-dns-proxy/bin/secure-dns-proxy' || {
+            tar -tzf "$asset_path" > "$archive_listing"
+            grep -qx 'secure-dns-proxy/bin/secure-dns-proxy' "$archive_listing" || {
               echo "Archive ${asset_path} is missing secure-dns-proxy/bin/secure-dns-proxy." >&2
               exit 1
             }
+            rm -f "$archive_listing"
             printf '%s\n' "${REPO_DIR}/${asset_path}" >> "$assets_file"
           done
 
