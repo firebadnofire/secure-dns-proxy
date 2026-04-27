@@ -11,10 +11,13 @@ BUILD_BIN   := build/$(PREFIX)
 # staging subdirs
 BIN_STG     := $(STAGEDIR)/$(PREFIX)/bin
 CONF_STG    := $(STAGEDIR)/$(PREFIX)/etc/$(PREFIX)
+PKG_STG     := $(STAGEDIR)/$(PREFIX)/packaging
 
 # source config
 EXAMPLE_CONF := config.example.json
 DEFAULT_CONF := config.default.json
+DIST_MAKEFILE := Makefile-dist
+DIST_README := README-dist.md
 
 # install paths
 INSTALL_PREFIX ?= /usr/local
@@ -24,6 +27,10 @@ INSTALL ?= install
 
 SYSTEMD_SERVICE := packaging/systemd/$(PREFIX).service
 SYSCTL_CONF     := packaging/sysctl/$(PREFIX).conf
+DIST_MAKEFILE_STG := $(STAGEDIR)/$(PREFIX)/Makefile
+DIST_README_STG := $(STAGEDIR)/$(PREFIX)/README.md
+SYSTEMD_SERVICE_STG := $(PKG_STG)/systemd/$(PREFIX).service
+SYSCTL_CONF_STG := $(PKG_STG)/sysctl/$(PREFIX).conf
 
 .PHONY: all package stage build install upgrade uninstall deinstall clean
 
@@ -49,8 +56,27 @@ $(CONF_STG):
 	cp $(EXAMPLE_CONF) $(CONF_STG)/config.example.json
 	cp $(DEFAULT_CONF) $(CONF_STG)/config.json
 
+# stage distribution installer as the tarball Makefile
+$(DIST_MAKEFILE_STG): $(DIST_MAKEFILE)
+	mkdir -p $(dir $@)
+	cp $(DIST_MAKEFILE) $@
+
+# stage binary release README
+$(DIST_README_STG): $(DIST_README)
+	mkdir -p $(dir $@)
+	cp $(DIST_README) $@
+
+# stage packaging metadata used by Makefile-dist
+$(SYSTEMD_SERVICE_STG): $(SYSTEMD_SERVICE)
+	mkdir -p $(dir $@)
+	cp $(SYSTEMD_SERVICE) $@
+
+$(SYSCTL_CONF_STG): $(SYSCTL_CONF)
+	mkdir -p $(dir $@)
+	cp $(SYSCTL_CONF) $@
+
 # assemble staging tree
-stage: $(BIN_STG) $(CONF_STG)
+stage: $(BIN_STG) $(CONF_STG) $(DIST_MAKEFILE_STG) $(DIST_README_STG) $(SYSTEMD_SERVICE_STG) $(SYSCTL_CONF_STG)
 
 # create tarball
 $(DISTDIR)/$(PREFIX)-$(VERSION).tar.gz: stage

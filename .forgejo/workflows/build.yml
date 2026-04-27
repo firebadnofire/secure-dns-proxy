@@ -132,16 +132,25 @@ jobs:
           : > "$assets_file"
           for asset_path in "${asset_paths[@]}"; do
             archive_listing="$(mktemp)"
+            required_members=(
+              'secure-dns-proxy/Makefile'
+              'secure-dns-proxy/README.md'
+              'secure-dns-proxy/bin/secure-dns-proxy'
+              'secure-dns-proxy/packaging/systemd/secure-dns-proxy.service'
+              'secure-dns-proxy/packaging/sysctl/secure-dns-proxy.conf'
+            )
             if [ ! -f "$asset_path" ]; then
               echo "Expected release tarball at ${asset_path}." >&2
               exit 1
             fi
 
             tar -tzf "$asset_path" > "$archive_listing"
-            grep -qx 'secure-dns-proxy/bin/secure-dns-proxy' "$archive_listing" || {
-              echo "Archive ${asset_path} is missing secure-dns-proxy/bin/secure-dns-proxy." >&2
-              exit 1
-            }
+            for member in "${required_members[@]}"; do
+              grep -qx "$member" "$archive_listing" || {
+                echo "Archive ${asset_path} is missing ${member}." >&2
+                exit 1
+              }
+            done
             rm -f "$archive_listing"
             printf '%s\n' "${REPO_DIR}/${asset_path}" >> "$assets_file"
           done
