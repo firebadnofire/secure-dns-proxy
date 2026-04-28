@@ -1,0 +1,44 @@
+#!/bin/sh
+set -eu
+
+pkg=secure-dns-proxy
+config_dir=/etc/$pkg
+config=$config_dir/config.json
+default_config=/usr/share/$pkg/config.default.json
+bin=/usr/local/bin/$pkg
+
+ensure_group() {
+	if getent group "$pkg" >/dev/null 2>&1; then
+		return 0
+	fi
+	groupadd --system "$pkg"
+}
+
+ensure_user() {
+	if id -u "$pkg" >/dev/null 2>&1; then
+		return 0
+	fi
+	useradd --system --gid "$pkg" --shell /usr/sbin/nologin --home-dir /nonexistent --no-create-home "$pkg"
+}
+
+case "${1:-configure}" in
+	configure|triggered)
+		ensure_group
+		ensure_user
+		mkdir -p "$config_dir"
+		chown "$pkg:$pkg" "$config_dir"
+		chmod 0750 "$config_dir"
+		if [ ! -f "$config" ]; then
+			install -m 0640 -o "$pkg" -g "$pkg" "$default_config" "$config"
+		fi
+		if command -v setcap >/dev/null 2>&1; then
+			setcap 'cap_net_bind_service=+ep' "$bin" || \
+				echo "warning: setcap failed; systemd capabilities are still configured" >&2
+		fi
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl daemon-reload >/dev/null 2>&1 || true
+		fi
+		;;
+esac
+
+exit 0

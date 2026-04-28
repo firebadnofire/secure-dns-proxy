@@ -10,7 +10,7 @@ jobs:
   release:
     runs-on: ubuntu-22.04
     container:
-      image: ubuntu:22.04
+      image: docker.io/library/ubuntu:22.04
       options: --network ci-network
 
     steps:
@@ -32,7 +32,7 @@ jobs:
           } | $tee_cmd /etc/apt/apt.conf.d/01proxy >/dev/null
 
           $apt_get update
-          $apt_get install -y --no-install-recommends ca-certificates curl git jq make tar
+          $apt_get install -y --no-install-recommends ca-certificates curl dpkg-dev file git jq make rpm tar
 
       - name: Check out repository
         shell: bash
@@ -96,14 +96,14 @@ jobs:
             fi
           done
 
-          for tool in base64 curl git go jq make sha256sum sha512sum tar; do
+          for tool in base64 curl dpkg-deb file git go jq make rpm rpmbuild sha256sum sha512sum tar; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "Missing required tool: ${tool}" >&2
               exit 1
             fi
           done
 
-      - name: Build Linux release tarballs
+      - name: Build Linux release assets
         shell: bash
         run: |
           set -euo pipefail
@@ -112,8 +112,28 @@ jobs:
 
           make clean
           for arch in amd64 arm64; do
-            rm -rf build
-            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 make package VERSION="${tag}-linux-${arch}"
+            case "$arch" in
+              amd64)
+                deb_arch="amd64"
+                rpm_arch="x86_64"
+                pet_arch="x86_64"
+                ;;
+              arm64)
+                deb_arch="arm64"
+                rpm_arch="aarch64"
+                pet_arch="aarch64"
+                ;;
+              *)
+                echo "Unsupported release architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 make -B package VERSION="${tag}-linux-${arch}-systemd"
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 make -B openrc-package VERSION="${tag}-linux-${arch}"
+            make -B pet VERSION="${tag}" PET_GOARCH="$arch" PET_ARCH="$pet_arch"
+            make -B deb VERSION="${tag}" DEB_GOARCH="$arch" DEB_ARCH="$deb_arch"
+            make -B rpm VERSION="${tag}" RPM_GOARCH="$arch" RPM_ARCH="$rpm_arch"
           done
 
       - name: Prepare release assets
@@ -124,34 +144,165 @@ jobs:
           cd "${REPO_DIR:?Missing repository checkout directory}"
           tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
           assets_file="${RUNNER_TEMP:-/tmp}/secure-dns-proxy-release-assets.txt"
+
+          systemd_tarballs=(
+            "dist/secure-dns-proxy-${tag}-linux-amd64-systemd.tar.gz"
+            "dist/secure-dns-proxy-${tag}-linux-arm64-systemd.tar.gz"
+          )
+          openrc_tarballs=(
+            "dist/secure-dns-proxy-${tag}-linux-amd64-openrc.tar.gz"
+            "dist/secure-dns-proxy-${tag}-linux-arm64-openrc.tar.gz"
+          )
+          pet_packages=(
+            "dist/secure-dns-proxy-${tag}-puppy-x86_64.pet"
+            "dist/secure-dns-proxy-${tag}-puppy-aarch64.pet"
+          )
+          deb_packages=(
+            "dist/secure-dns-proxy-${tag}-debian-amd64.deb"
+            "dist/secure-dns-proxy-${tag}-debian-arm64.deb"
+          )
+          rpm_packages=(
+            "dist/secure-dns-proxy-${tag}-fedora-x86_64.rpm"
+            "dist/secure-dns-proxy-${tag}-fedora-aarch64.rpm"
+          )
           asset_paths=(
-            "dist/secure-dns-proxy-${tag}-linux-amd64.tar.gz"
-            "dist/secure-dns-proxy-${tag}-linux-arm64.tar.gz"
+            "${systemd_tarballs[@]}"
+            "${openrc_tarballs[@]}"
+            "${pet_packages[@]}"
+            "${deb_packages[@]}"
+            "${rpm_packages[@]}"
           )
 
-          : > "$assets_file"
-          for asset_path in "${asset_paths[@]}"; do
+          require_members() {
+            local asset_path="$1"
+            local listing="$2"
+            shift 2
+            local member
+            for member in "$@"; do
+              grep -qx "$member" "$listing" || {
+                echo "Archive ${asset_path} is missing ${member}." >&2
+                exit 1
+              }
+            done
+          }
+
+          validate_tarball() {
+            local asset_path="$1"
+            shift
             archive_listing="$(mktemp)"
-            required_members=(
-              'secure-dns-proxy/Makefile'
-              'secure-dns-proxy/README.md'
-              'secure-dns-proxy/bin/secure-dns-proxy'
-              'secure-dns-proxy/packaging/systemd/secure-dns-proxy.service'
-              'secure-dns-proxy/packaging/sysctl/secure-dns-proxy.conf'
-            )
             if [ ! -f "$asset_path" ]; then
               echo "Expected release tarball at ${asset_path}." >&2
               exit 1
             fi
 
             tar -tzf "$asset_path" > "$archive_listing"
-            for member in "${required_members[@]}"; do
-              grep -qx "$member" "$archive_listing" || {
-                echo "Archive ${asset_path} is missing ${member}." >&2
-                exit 1
-              }
-            done
+            require_members "$asset_path" "$archive_listing" "$@"
             rm -f "$archive_listing"
+          }
+
+          validate_pet() {
+            local asset_path="$1"
+            local size
+            local payload
+            local listing
+            local expected_md5
+            local appended_md5
+            if [ ! -f "$asset_path" ]; then
+              echo "Expected PET package at ${asset_path}." >&2
+              exit 1
+            fi
+            size="$(wc -c < "$asset_path")"
+            if [ "$size" -le 32 ]; then
+              echo "PET package ${asset_path} is too small to contain an MD5 trailer." >&2
+              exit 1
+            fi
+            payload="$(mktemp)"
+            listing="$(mktemp)"
+            head -c "$((size - 32))" "$asset_path" > "$payload"
+            appended_md5="$(tail -c 32 "$asset_path")"
+            expected_md5="$(md5sum "$payload" | awk '{print $1}')"
+            if [ "$expected_md5" != "$appended_md5" ]; then
+              echo "PET package ${asset_path} has an invalid MD5 trailer." >&2
+              exit 1
+            fi
+            tar -tzf "$payload" > "$listing"
+            require_members "$asset_path" "$listing" \
+              './pet.specs' \
+              './pinstall.sh' \
+              './puninstall.sh' \
+              './usr/local/bin/secure-dns-proxy' \
+              './usr/share/doc/secure-dns-proxy/LICENSE'
+            rm -f "$payload" "$listing"
+          }
+
+          validate_deb() {
+            local asset_path="$1"
+            local listing
+            if [ ! -f "$asset_path" ]; then
+              echo "Expected Debian package at ${asset_path}." >&2
+              exit 1
+            fi
+            dpkg-deb --info "$asset_path" >/dev/null
+            listing="$(mktemp)"
+            dpkg-deb --contents "$asset_path" | awk '{print $6}' > "$listing"
+            require_members "$asset_path" "$listing" \
+              './usr/local/bin/secure-dns-proxy' \
+              './lib/systemd/system/secure-dns-proxy.service' \
+              './etc/sysctl.d/80-secure-dns-proxy.conf' \
+              './usr/share/secure-dns-proxy/config.default.json'
+            rm -f "$listing"
+          }
+
+          validate_rpm() {
+            local asset_path="$1"
+            local listing
+            if [ ! -f "$asset_path" ]; then
+              echo "Expected RPM package at ${asset_path}." >&2
+              exit 1
+            fi
+            rpm -qip "$asset_path" >/dev/null
+            listing="$(mktemp)"
+            rpm -qlp "$asset_path" > "$listing"
+            require_members "$asset_path" "$listing" \
+              '/usr/local/bin/secure-dns-proxy' \
+              '/usr/lib/systemd/system/secure-dns-proxy.service' \
+              '/etc/sysctl.d/80-secure-dns-proxy.conf' \
+              '/usr/share/secure-dns-proxy/config.default.json'
+            rm -f "$listing"
+          }
+
+          for asset_path in "${systemd_tarballs[@]}"; do
+            validate_tarball "$asset_path" \
+              'secure-dns-proxy/Makefile' \
+              'secure-dns-proxy/README.md' \
+              'secure-dns-proxy/bin/secure-dns-proxy' \
+              'secure-dns-proxy/packaging/systemd/secure-dns-proxy.service' \
+              'secure-dns-proxy/packaging/sysctl/secure-dns-proxy.conf'
+          done
+
+          for asset_path in "${openrc_tarballs[@]}"; do
+            validate_tarball "$asset_path" \
+              'secure-dns-proxy/Makefile' \
+              'secure-dns-proxy/README.md' \
+              'secure-dns-proxy/bin/secure-dns-proxy' \
+              'secure-dns-proxy/packaging/openrc/secure-dns-proxy' \
+              'secure-dns-proxy/packaging/sysctl/secure-dns-proxy.conf'
+          done
+
+          for asset_path in "${pet_packages[@]}"; do
+            validate_pet "$asset_path"
+          done
+
+          for asset_path in "${deb_packages[@]}"; do
+            validate_deb "$asset_path"
+          done
+
+          for asset_path in "${rpm_packages[@]}"; do
+            validate_rpm "$asset_path"
+          done
+
+          : > "$assets_file"
+          for asset_path in "${asset_paths[@]}"; do
             printf '%s\n' "${REPO_DIR}/${asset_path}" >> "$assets_file"
           done
 
@@ -174,7 +325,7 @@ jobs:
           repo="${repository#*/}"
           assets_file="${ASSETS_FILE:?Missing release asset list file}"
           release_name="secure-dns-proxy ${tag}"
-          release_body="Automated Linux tarball release for ${tag}."
+          release_body="Automated Linux package release for ${tag}."
 
           api_request() {
             local method="$1"
@@ -396,7 +547,7 @@ jobs:
           token="${GH_KEY:?Missing GitHub token}"
           assets_file="${ASSETS_FILE:?Missing release asset list file}"
           release_name="secure-dns-proxy ${tag}"
-          release_body="Automated Linux tarball release for ${tag}."
+          release_body="Automated Linux package release for ${tag}."
 
           github_request() {
             local method="$1"
@@ -445,7 +596,7 @@ jobs:
             fi
 
             github_request POST "${upload_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
-              --header "Content-Type: application/gzip" \
+              --header "Content-Type: application/octet-stream" \
               --data-binary "@${asset_path}" >/dev/null
           }
 

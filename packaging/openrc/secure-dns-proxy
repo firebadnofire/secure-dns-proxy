@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+
+name="secure-dns-proxy"
+description="Secure DNS proxy"
+command="/usr/local/bin/secure-dns-proxy"
+command_args="--config /etc/secure-dns-proxy/config.json"
+command_background="yes"
+command_user="secure-dns-proxy:secure-dns-proxy"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}.log"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	if [ ! -f /etc/secure-dns-proxy/config.json ]; then
+		eerror "missing /etc/secure-dns-proxy/config.json"
+		return 1
+	fi
+
+	checkpath -d -m 0750 -o secure-dns-proxy:secure-dns-proxy /run/secure-dns-proxy
+	checkpath -f -m 0644 /var/log/${RC_SVCNAME}.log
+}

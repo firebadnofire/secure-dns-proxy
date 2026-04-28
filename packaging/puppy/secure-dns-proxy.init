@@ -1,0 +1,115 @@
+#!/bin/sh
+
+pkg=secure-dns-proxy
+bin=/usr/local/bin/$pkg
+config=/etc/$pkg/config.json
+pidfile=/var/run/$pkg.pid
+logfile=/var/log/$pkg.log
+
+read_pid() {
+	[ -f "$pidfile" ] || return 1
+	sed 's/[^0-9].*$//' "$pidfile" 2>/dev/null | sed -n '1p'
+}
+
+is_running() {
+	pid=$(read_pid) || return 1
+	[ -n "$pid" ] || return 1
+	kill -0 "$pid" 2>/dev/null
+}
+
+start_service() {
+	if is_running; then
+		echo "$pkg is already running"
+		return 0
+	fi
+
+	if [ ! -x "$bin" ]; then
+		echo "error: missing executable $bin" >&2
+		return 1
+	fi
+
+	if [ ! -f "$config" ]; then
+		echo "error: missing configuration $config" >&2
+		return 1
+	fi
+
+	mkdir -p /var/run /var/log
+	"$bin" --config "$config" >>"$logfile" 2>&1 &
+	pid=$!
+	echo "$pid" > "$pidfile"
+	sleep 1
+
+	if ! kill -0 "$pid" 2>/dev/null; then
+		rm -f "$pidfile"
+		echo "error: $pkg failed to start; see $logfile" >&2
+		return 1
+	fi
+
+	echo "started $pkg"
+}
+
+stop_service() {
+	if ! is_running; then
+		rm -f "$pidfile"
+		echo "$pkg is not running"
+		return 0
+	fi
+
+	pid=$(read_pid)
+	kill "$pid" 2>/dev/null || true
+
+	i=0
+	while kill -0 "$pid" 2>/dev/null; do
+		i=$((i + 1))
+		if [ "$i" -ge 10 ]; then
+			echo "error: $pkg did not stop after 10 seconds" >&2
+			return 1
+		fi
+		sleep 1
+	done
+
+	rm -f "$pidfile"
+	echo "stopped $pkg"
+}
+
+reload_service() {
+	if ! is_running; then
+		echo "error: $pkg is not running" >&2
+		return 1
+	fi
+
+	pid=$(read_pid)
+	kill -HUP "$pid"
+	echo "reloaded $pkg"
+}
+
+status_service() {
+	if is_running; then
+		pid=$(read_pid)
+		echo "$pkg is running with PID $pid"
+	else
+		echo "$pkg is not running"
+	fi
+}
+
+case "${1:-}" in
+	start)
+		start_service
+		;;
+	stop)
+		stop_service
+		;;
+	restart)
+		stop_service && start_service
+		;;
+	reload)
+		reload_service
+		;;
+	status)
+		status_service
+		;;
+	*)
+		echo "usage: $0 {start|stop|restart|reload|status}" >&2
+		exit 2
+		;;
+esac

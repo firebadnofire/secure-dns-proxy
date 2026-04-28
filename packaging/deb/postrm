@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+pkg=secure-dns-proxy
+
+if command -v systemctl >/dev/null 2>&1; then
+	systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+case "${1:-}" in
+	purge)
+		rm -f "/etc/$pkg/config.json" "/etc/$pkg/config.example.json"
+		rmdir "/etc/$pkg" 2>/dev/null || true
+		userdel "$pkg" 2>/dev/null || true
+		groupdel "$pkg" 2>/dev/null || true
+		;;
+esac
+
+exit 0

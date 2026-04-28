@@ -73,6 +73,42 @@ sudo make uninstall
 sudo make deinstall
 ```
 
+### Distribution packages
+
+The release workflow builds systemd and OpenRC tarballs plus Puppy, Debian, and
+RPM-family packages. Distro-specific package artifacts use this naming pattern:
+
+```text
+secure-dns-proxy-${VERSION}-{distro}.pkg
+```
+
+The distro segment includes the target package family and architecture, for
+example:
+
+```text
+secure-dns-proxy-v1.1.4-puppy-x86_64.pet
+secure-dns-proxy-v1.1.4-debian-amd64.deb
+secure-dns-proxy-v1.1.4-fedora-x86_64.rpm
+```
+
+Build local packages with:
+
+```sh
+make pet VERSION=v1.1.4 PET_GOARCH=amd64 PET_ARCH=x86_64
+make deb VERSION=v1.1.4 DEB_GOARCH=amd64 DEB_ARCH=amd64
+make rpm VERSION=v1.1.4 RPM_GOARCH=amd64 RPM_ARCH=x86_64
+make openrc-package VERSION=v1.1.4-linux-arm64
+```
+
+The `.deb` target requires `dpkg-deb`; the `.rpm` target requires `rpmbuild`.
+The PET, DEB, and RPM packages install `/usr/local/bin/secure-dns-proxy`, install
+an example configuration, and preserve an existing
+`/etc/secure-dns-proxy/config.json` by creating it from the default template only
+when it does not already exist. Puppy and OpenRC systems do not provide the
+systemd sandboxing used by the systemd tarball and systemd packages; review
+`packaging/puppy/README.md` or the OpenRC release README before distributing or
+enabling those packages.
+
 ### Example configuration (config.example.json)
 ```json
 {

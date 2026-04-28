@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+pkg=secure-dns-proxy
+
+case "${1:-}" in
+	remove|deconfigure)
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl stop "$pkg.service" >/dev/null 2>&1 || true
+		fi
+		;;
+esac
+
+exit 0
