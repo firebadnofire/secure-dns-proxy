@@ -381,7 +381,7 @@ $(RPM_FILE): $(RPM_PAYLOAD_ROOT) $(RPM_SPEC) $(RPM_RPMRC) $(RPM_LEGACY_RPMRC)
 	@command -v rpmbuild >/dev/null 2>&1 || { echo "error: rpmbuild is required to build $(RPM_FILE)" >&2; exit 1; }
 	mkdir -p $(DISTDIR) $(RPM_TOPDIR)/RPMS
 	rm -f $@
-	HOME="$(abspath $(RPM_HOME))" XDG_CONFIG_HOME="$(abspath $(RPM_XDG_CONFIG_HOME))" rpmbuild --define "_topdir $(abspath $(RPM_TOPDIR))" --define "_build_id_links none" --target "$(RPM_ARCH)" -bb "$(RPM_SPEC)"
+	HOME="$(abspath $(RPM_HOME))" XDG_CONFIG_HOME="$(abspath $(RPM_XDG_CONFIG_HOME))" rpmbuild --define "_topdir $(abspath $(RPM_TOPDIR))" --define "_build_id_links none" --define "__strip /bin/true" --target "$(RPM_ARCH)" -bb "$(RPM_SPEC)"
 	built_rpm=$$(find "$(RPM_TOPDIR)/RPMS" -type f -name '$(PREFIX)-$(PKG_VERSION)-*.rpm' | sort | tail -n 1); \
 	test -n "$$built_rpm" || { echo "error: rpmbuild did not produce an RPM" >&2; exit 1; }; \
 	cp "$$built_rpm" "$@"
