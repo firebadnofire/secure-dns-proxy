@@ -131,7 +131,9 @@ jobs:
 
             GOOS=linux GOARCH="$arch" CGO_ENABLED=0 make -B package VERSION="${tag}-linux-${arch}-systemd"
             GOOS=linux GOARCH="$arch" CGO_ENABLED=0 make -B openrc-package VERSION="${tag}-linux-${arch}"
-            make -B pet VERSION="${tag}" PET_GOARCH="$arch" PET_ARCH="$pet_arch"
+            if [ "$arch" = "amd64" ]; then
+              make -B pet VERSION="${tag}" PET_GOARCH="$arch" PET_ARCH="$pet_arch"
+            fi
             make -B deb VERSION="${tag}" DEB_GOARCH="$arch" DEB_ARCH="$deb_arch"
             make -B rpm VERSION="${tag}" RPM_GOARCH="$arch" RPM_ARCH="$rpm_arch"
           done
@@ -155,7 +157,6 @@ jobs:
           )
           pet_packages=(
             "dist/secure-dns-proxy-${tag}-puppy-x86_64.pet"
-            "dist/secure-dns-proxy-${tag}-puppy-aarch64.pet"
           )
           deb_packages=(
             "dist/secure-dns-proxy-${tag}-debian-amd64.deb"
@@ -239,6 +240,10 @@ jobs:
               exit 1
             fi
             tar -tzf "$payload" > "$listing"
+            if [ "$(sed -n '1p' "$listing")" != "pet.specs" ] && [ "$(sed -n '1p' "$listing")" != "./pet.specs" ]; then
+              echo "PET package ${asset_path} first archive member is '$(sed -n '1p' "$listing")', expected pet.specs first." >&2
+              exit 1
+            fi
             if grep -qxE '(\./?|\.)' "$listing"; then
               echo "PET package ${asset_path} contains a root current-directory entry; Puppy may treat it as package name '.'." >&2
               exit 1
