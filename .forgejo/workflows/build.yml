@@ -240,25 +240,25 @@ jobs:
               exit 1
             fi
             tar -tzf "$payload" > "$listing"
-            if [ "$(sed -n '1p' "$listing")" != "pet.specs" ] && [ "$(sed -n '1p' "$listing")" != "./pet.specs" ]; then
-              echo "PET package ${asset_path} first archive member is '$(sed -n '1p' "$listing")', expected pet.specs first." >&2
+            if [ "$(sed -n '1p' "$listing")" != "${package_base}/" ]; then
+              echo "PET package ${asset_path} first archive member is '$(sed -n '1p' "$listing")', expected ${package_base}/." >&2
               exit 1
             fi
             if grep -qxE '(\./?|\.)' "$listing"; then
               echo "PET package ${asset_path} contains a root current-directory entry; Puppy may treat it as package name '.'." >&2
               exit 1
             fi
-            if grep -Fqx "$package_base" "$listing" || grep -Fq "$package_base/" "$listing" || grep -Fq "./$package_base/" "$listing"; then
-              echo "PET package ${asset_path} nests files under ${package_base}; expected files at archive root." >&2
+            if grep -qE '(^|/)\._' "$listing"; then
+              echo "PET package ${asset_path} contains AppleDouble metadata entries." >&2
               exit 1
             fi
             require_members "$asset_path" "$listing" \
-              'pet.specs' \
-              'pinstall.sh' \
-              'puninstall.sh' \
-              'usr/local/bin/secure-dns-proxy' \
-              'usr/share/doc/secure-dns-proxy/LICENSE'
-            specs_line="$(tar -xOzf "$payload" pet.specs | head -n 1)"
+              "${package_base}/pet.specs" \
+              "${package_base}/pinstall.sh" \
+              "${package_base}/puninstall.sh" \
+              "${package_base}/usr/local/bin/secure-dns-proxy" \
+              "${package_base}/usr/share/doc/secure-dns-proxy/LICENSE"
+            specs_line="$(tar -xOzf "$payload" "${package_base}/pet.specs" | head -n 1)"
             if printf '%s' "$specs_line" | grep -q $'\r'; then
               echo "PET package ${asset_path} pet.specs contains CRLF line endings." >&2
               exit 1
