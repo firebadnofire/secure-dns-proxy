@@ -228,7 +228,7 @@ $(PET_ROOT): $(PET_BIN) $(EXAMPLE_CONF) $(DEFAULT_CONF) LICENSE $(PUPPY_PINSTALL
 
 $(PET_TGZ): $(PET_ROOT)
 	rm -f $@
-	tar -czf $@ -C $(PET_ROOT) .
+	tar -czf $@ -C $(PET_ROOT) etc pet.specs pinstall.sh puninstall.sh usr
 
 $(PET_FILE): $(PET_TGZ)
 	mkdir -p $(DISTDIR)

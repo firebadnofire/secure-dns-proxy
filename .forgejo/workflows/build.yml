@@ -179,7 +179,7 @@ jobs:
             shift 2
             local member
             for member in "$@"; do
-              grep -qx "$member" "$listing" || {
+              grep -Fxq "$member" "$listing" || {
                 echo "Archive ${asset_path} is missing ${member}." >&2
                 exit 1
               }
@@ -205,12 +205,25 @@ jobs:
             local size
             local payload
             local listing
+            local package_base
+            local specs_line
+            local spec_fullpkg
+            local spec_name
+            local spec_version
+            local spec_release
+            local spec_category
+            local spec_size
+            local spec_path
+            local spec_filename
+            local spec_deps
+            local spec_description
             local expected_md5
             local appended_md5
             if [ ! -f "$asset_path" ]; then
               echo "Expected PET package at ${asset_path}." >&2
               exit 1
             fi
+            package_base="$(basename "$asset_path" .pet)"
             size="$(wc -c < "$asset_path")"
             if [ "$size" -le 32 ]; then
               echo "PET package ${asset_path} is too small to contain an MD5 trailer." >&2
@@ -226,12 +239,38 @@ jobs:
               exit 1
             fi
             tar -tzf "$payload" > "$listing"
+            if grep -qxE '(\./?|\.)' "$listing"; then
+              echo "PET package ${asset_path} contains a root current-directory entry; Puppy may treat it as package name '.'." >&2
+              exit 1
+            fi
+            if grep -Fqx "$package_base" "$listing" || grep -Fq "$package_base/" "$listing" || grep -Fq "./$package_base/" "$listing"; then
+              echo "PET package ${asset_path} nests files under ${package_base}; expected files at archive root." >&2
+              exit 1
+            fi
             require_members "$asset_path" "$listing" \
-              './pet.specs' \
-              './pinstall.sh' \
-              './puninstall.sh' \
-              './usr/local/bin/secure-dns-proxy' \
-              './usr/share/doc/secure-dns-proxy/LICENSE'
+              'pet.specs' \
+              'pinstall.sh' \
+              'puninstall.sh' \
+              'usr/local/bin/secure-dns-proxy' \
+              'usr/share/doc/secure-dns-proxy/LICENSE'
+            specs_line="$(tar -xOzf "$payload" pet.specs | head -n 1)"
+            IFS='|' read -r spec_fullpkg spec_name spec_version spec_release spec_category spec_size spec_path spec_filename spec_deps spec_description _ <<< "$specs_line"
+            if [ -z "$spec_fullpkg" ] || [ "$spec_fullpkg" = "." ]; then
+              echo "PET package ${asset_path} has an invalid pet.specs package name: '${spec_fullpkg}'." >&2
+              exit 1
+            fi
+            if [ "$spec_fullpkg" != "$package_base" ]; then
+              echo "PET package ${asset_path} pet.specs name '${spec_fullpkg}' does not match '${package_base}'." >&2
+              exit 1
+            fi
+            if [ "$spec_name" != "secure-dns-proxy" ]; then
+              echo "PET package ${asset_path} pet.specs package field is '${spec_name}', expected secure-dns-proxy." >&2
+              exit 1
+            fi
+            if [ "$spec_filename" != "${package_base}.pet" ]; then
+              echo "PET package ${asset_path} pet.specs filename field is '${spec_filename}', expected ${package_base}.pet." >&2
+              exit 1
+            fi
             rm -f "$payload" "$listing"
           }
 
