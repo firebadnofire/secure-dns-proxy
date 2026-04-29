@@ -45,6 +45,10 @@ RPM_SYSTEMD_UNIT_DIR ?= /usr/lib/systemd/system
 RPM_PKG := $(PREFIX)-$(VERSION)-$(RPM_DISTRO)
 RPM_TOPDIR := build/rpm
 RPM_PAYLOAD_ROOT := $(RPM_TOPDIR)/payload/$(RPM_PKG)
+RPM_HOME := $(RPM_TOPDIR)/home
+RPM_XDG_CONFIG_HOME := $(RPM_TOPDIR)/xdg
+RPM_RPMRC := $(RPM_XDG_CONFIG_HOME)/rpm/rpmrc
+RPM_LEGACY_RPMRC := $(RPM_HOME)/.rpmrc
 RPM_SPEC := $(RPM_TOPDIR)/SPECS/$(RPM_PKG).spec
 RPM_BIN := build/$(PREFIX)-linux-$(RPM_GOARCH)
 RPM_FILE := $(DISTDIR)/$(RPM_PKG).rpm
@@ -292,7 +296,7 @@ $(DEB_FILE): $(DEB_ROOT)
 
 # RPM package. The RPM payload mirrors the systemd package layout used by the
 # tarball installer, with scriptlets for user creation and config preservation.
-rpm-stage: $(RPM_PAYLOAD_ROOT) $(RPM_SPEC)
+rpm-stage: $(RPM_PAYLOAD_ROOT) $(RPM_SPEC) $(RPM_RPMRC) $(RPM_LEGACY_RPMRC)
 
 $(RPM_PAYLOAD_ROOT): $(RPM_BIN) $(EXAMPLE_CONF) $(DEFAULT_CONF) LICENSE $(SYSTEMD_SERVICE) $(SYSCTL_CONF)
 	rm -rf $(RPM_PAYLOAD_ROOT)
@@ -361,11 +365,23 @@ $(RPM_SPEC): Makefile
 		printf '%s\n' '- Automated package build.'; \
 	} > "$@"
 
-$(RPM_FILE): $(RPM_PAYLOAD_ROOT) $(RPM_SPEC)
+$(RPM_RPMRC):
+	mkdir -p $(dir $@)
+	{ \
+		printf 'buildarch_compat: x86_64: aarch64 noarch\n'; \
+		printf 'buildarch_compat: amd64: aarch64 noarch\n'; \
+		printf 'buildarch_compat: aarch64: noarch\n'; \
+	} > "$@"
+
+$(RPM_LEGACY_RPMRC): $(RPM_RPMRC)
+	mkdir -p $(dir $@)
+	cp "$(RPM_RPMRC)" "$@"
+
+$(RPM_FILE): $(RPM_PAYLOAD_ROOT) $(RPM_SPEC) $(RPM_RPMRC) $(RPM_LEGACY_RPMRC)
 	@command -v rpmbuild >/dev/null 2>&1 || { echo "error: rpmbuild is required to build $(RPM_FILE)" >&2; exit 1; }
 	mkdir -p $(DISTDIR) $(RPM_TOPDIR)/RPMS
 	rm -f $@
-	rpmbuild --define "_topdir $(abspath $(RPM_TOPDIR))" --define "_build_id_links none" --target "$(RPM_ARCH)" -bb "$(RPM_SPEC)"
+	HOME="$(abspath $(RPM_HOME))" XDG_CONFIG_HOME="$(abspath $(RPM_XDG_CONFIG_HOME))" rpmbuild --define "_topdir $(abspath $(RPM_TOPDIR))" --define "_build_id_links none" --target "$(RPM_ARCH)" -bb "$(RPM_SPEC)"
 	built_rpm=$$(find "$(RPM_TOPDIR)/RPMS" -type f -name '$(PREFIX)-$(PKG_VERSION)-*.rpm' | sort | tail -n 1); \
 	test -n "$$built_rpm" || { echo "error: rpmbuild did not produce an RPM" >&2; exit 1; }; \
 	cp "$$built_rpm" "$@"
