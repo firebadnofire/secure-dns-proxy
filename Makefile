@@ -222,8 +222,8 @@ $(PET_ROOT): $(PET_BIN) $(EXAMPLE_CONF) $(DEFAULT_CONF) LICENSE $(PUPPY_PINSTALL
 	cp $(PUPPY_README) $(PET_ROOT)/usr/share/doc/$(PREFIX)/README-puppy.md
 	cp LICENSE $(PET_ROOT)/usr/share/doc/$(PREFIX)/LICENSE
 	size_k=$$(du -sk "$(PET_ROOT)" | awk '{print $$1}'); \
-	printf '%s|%s|%s||%s|%sK||%s.pet||%s||||\n' \
-		"$(PET_PKG)" "$(PREFIX)" "$(VERSION)" "$(PET_CATEGORY)" "$$size_k" "$(PET_PKG)" "$(PKG_DESCRIPTION)" \
+	printf '%s|%s|%s||%s|%sK||%s.pet||%s\n' \
+		"$(PET_PKG)" "$(PREFIX)" "$(PKG_VERSION)" "$(PET_CATEGORY)" "$$size_k" "$(PET_PKG)" "$(PKG_DESCRIPTION)" \
 		> "$(PET_ROOT)/pet.specs"
 
 $(PET_TGZ): $(PET_ROOT)

@@ -259,6 +259,14 @@ jobs:
               'usr/local/bin/secure-dns-proxy' \
               'usr/share/doc/secure-dns-proxy/LICENSE'
             specs_line="$(tar -xOzf "$payload" pet.specs | head -n 1)"
+            if printf '%s' "$specs_line" | grep -q $'\r'; then
+              echo "PET package ${asset_path} pet.specs contains CRLF line endings." >&2
+              exit 1
+            fi
+            if [ "$(awk -F'|' '{print NF}' <<< "$specs_line")" -ne 10 ]; then
+              echo "PET package ${asset_path} pet.specs must contain exactly 10 pipe-delimited fields." >&2
+              exit 1
+            fi
             IFS='|' read -r spec_fullpkg spec_name spec_version spec_release spec_category spec_size spec_path spec_filename spec_deps spec_description _ <<< "$specs_line"
             if [ -z "$spec_fullpkg" ] || [ "$spec_fullpkg" = "." ]; then
               echo "PET package ${asset_path} has an invalid pet.specs package name: '${spec_fullpkg}'." >&2
@@ -270,6 +278,10 @@ jobs:
             fi
             if [ "$spec_name" != "secure-dns-proxy" ]; then
               echo "PET package ${asset_path} pet.specs package field is '${spec_name}', expected secure-dns-proxy." >&2
+              exit 1
+            fi
+            if [ -z "$spec_version" ] || [[ "$spec_version" == v* ]] || [[ "$spec_version" == V* ]]; then
+              echo "PET package ${asset_path} pet.specs version field is '${spec_version}', expected a non-empty version without a leading v." >&2
               exit 1
             fi
             if [ "$spec_filename" != "${package_base}.pet" ]; then
