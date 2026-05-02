@@ -256,7 +256,9 @@ jobs:
               "${package_base}/pet.specs" \
               "${package_base}/pinstall.sh" \
               "${package_base}/puninstall.sh" \
+              "${package_base}/etc/secure-dns-proxy/config.example.toml" \
               "${package_base}/usr/local/bin/secure-dns-proxy" \
+              "${package_base}/usr/share/secure-dns-proxy/config.default.toml" \
               "${package_base}/usr/share/doc/secure-dns-proxy/LICENSE"
             specs_line="$(tar -xOzf "$payload" "${package_base}/pet.specs" | head -n 1)"
             if printf '%s' "$specs_line" | grep -q $'\r'; then
@@ -305,7 +307,8 @@ jobs:
               './usr/local/bin/secure-dns-proxy' \
               './lib/systemd/system/secure-dns-proxy.service' \
               './etc/sysctl.d/80-secure-dns-proxy.conf' \
-              './usr/share/secure-dns-proxy/config.default.json'
+              './etc/secure-dns-proxy/config.example.toml' \
+              './usr/share/secure-dns-proxy/config.default.toml'
             rm -f "$listing"
           }
 
@@ -323,7 +326,8 @@ jobs:
               '/usr/local/bin/secure-dns-proxy' \
               '/usr/lib/systemd/system/secure-dns-proxy.service' \
               '/etc/sysctl.d/80-secure-dns-proxy.conf' \
-              '/usr/share/secure-dns-proxy/config.default.json'
+              '/etc/secure-dns-proxy/config.example.toml' \
+              '/usr/share/secure-dns-proxy/config.default.toml'
             rm -f "$listing"
           }
 
@@ -332,6 +336,8 @@ jobs:
               'secure-dns-proxy/Makefile' \
               'secure-dns-proxy/README.md' \
               'secure-dns-proxy/bin/secure-dns-proxy' \
+              'secure-dns-proxy/etc/secure-dns-proxy/config.example.toml' \
+              'secure-dns-proxy/etc/secure-dns-proxy/config.toml' \
               'secure-dns-proxy/packaging/systemd/secure-dns-proxy.service' \
               'secure-dns-proxy/packaging/sysctl/secure-dns-proxy.conf'
           done
@@ -341,6 +347,8 @@ jobs:
               'secure-dns-proxy/Makefile' \
               'secure-dns-proxy/README.md' \
               'secure-dns-proxy/bin/secure-dns-proxy' \
+              'secure-dns-proxy/etc/secure-dns-proxy/config.example.toml' \
+              'secure-dns-proxy/etc/secure-dns-proxy/config.toml' \
               'secure-dns-proxy/packaging/openrc/secure-dns-proxy' \
               'secure-dns-proxy/packaging/sysctl/secure-dns-proxy.conf'
           done
