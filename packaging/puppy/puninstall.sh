@@ -3,7 +3,7 @@ set -u
 
 pkg=secure-dns-proxy
 pidfile=/var/run/$pkg.pid
-config=/etc/$pkg/config.json
+config=/etc/$pkg/config.toml
 
 if [ -f "$pidfile" ]; then
 	pid=$(sed 's/[^0-9].*$//' "$pidfile" 2>/dev/null | sed -n '1p' || true)

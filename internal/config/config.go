@@ -1,50 +1,38 @@
-// Package config defines the JSON configuration schema and default values used
+// Package config defines the TOML configuration schema and default values used
 // by the proxy.
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
-// Duration is a thin wrapper so JSON can accept both quoted durations
+// Duration is a thin wrapper so TOML can accept both quoted durations
 // ("5s", "1m") and raw nanoseconds.
 // It retains time.Duration semantics for arithmetic when converted with
 // Duration().
 type Duration time.Duration
 
-// UnmarshalJSON implements encoding/json unmarshalling for Duration.
-// It supports string durations first, then numeric nanoseconds as a fallback.
-func (d *Duration) UnmarshalJSON(b []byte) error {
-	if len(b) == 0 {
-		return fmt.Errorf("empty duration")
-	}
-
-	// Attempt string-based duration first.
-	if b[0] == '"' {
-		var s string
-		if err := json.Unmarshal(b, &s); err != nil {
-			return err
-		}
-		parsed, err := time.ParseDuration(s)
+// UnmarshalTOML supports both string durations and raw nanoseconds.
+func (d *Duration) UnmarshalTOML(v any) error {
+	switch value := v.(type) {
+	case string:
+		parsed, err := time.ParseDuration(value)
 		if err != nil {
 			return err
 		}
 		*d = Duration(parsed)
 		return nil
-	}
-
-	// Fallback to numeric nanoseconds.
-	var n int64
-	if err := json.Unmarshal(b, &n); err == nil {
-		*d = Duration(time.Duration(n))
+	case int64:
+		*d = Duration(time.Duration(value))
 		return nil
+	default:
+		return fmt.Errorf("invalid duration type %T", v)
 	}
-
-	return fmt.Errorf("invalid duration: %s", string(b))
 }
 
 // Duration converts the custom Duration type back to time.Duration so other
@@ -54,52 +42,52 @@ func (d Duration) Duration() time.Duration {
 }
 
 // Config describes the full runtime configuration for the proxy.
-// Each field maps to a JSON property in the config file.
+// Each field maps to a TOML property in the config file.
 type Config struct {
 	// BindAddress/Port define where the DNS server listens.
-	BindAddress string `json:"bind_address"`
-	Port        int    `json:"port"`
+	BindAddress string `toml:"bind_address"`
+	Port        int    `toml:"port"`
 	// InsecureTLS disables TLS verification for upstreams (use with caution).
-	InsecureTLS bool `json:"insecure_tls"`
+	InsecureTLS bool `toml:"insecure_tls"`
 	// Upstreams is the full list of resolver endpoints.
-	Upstreams []UpstreamConfig `json:"upstreams"`
+	Upstreams []UpstreamConfig `toml:"upstreams"`
 
 	// UpstreamPolicy chooses the strategy for selecting upstreams.
-	UpstreamPolicy string `json:"upstream_policy"`
+	UpstreamPolicy string `toml:"upstream_policy"`
 	// UpstreamRaceFanout controls parallelism for the "race" policy.
-	UpstreamRaceFanout int `json:"upstream_race_fanout"`
+	UpstreamRaceFanout int `toml:"upstream_race_fanout"`
 
 	// HealthChecks configures active probing of upstreams.
-	HealthChecks HealthCheckConfig `json:"health_checks"`
+	HealthChecks HealthCheckConfig `toml:"health_checks"`
 
 	// Cache controls DNS answer caching.
-	Cache CacheConfig `json:"cache"`
+	Cache CacheConfig `toml:"cache"`
 	// Pools tunes connection reuse pools for upstream protocols.
-	Pools PoolConfig `json:"pools"`
+	Pools PoolConfig `toml:"pools"`
 	// Timeouts applies to upstream dial/read operations.
-	Timeouts TimeoutConfig `json:"timeouts"`
+	Timeouts TimeoutConfig `toml:"timeouts"`
 	// RateLimit caps concurrent upstream exchanges.
-	RateLimit RateLimit `json:"rate_limit"`
+	RateLimit RateLimit `toml:"rate_limit"`
 	// Logging controls verbosity.
-	Logging LoggingConfig `json:"logging"`
+	Logging LoggingConfig `toml:"logging"`
 	// Metrics toggles instrumentation.
-	Metrics MetricsConfig `json:"metrics"`
+	Metrics MetricsConfig `toml:"metrics"`
 	// PrewarmPools determines whether connection pools prefill at startup.
-	PrewarmPools bool `json:"prewarm_pools"`
+	PrewarmPools bool `toml:"prewarm_pools"`
 }
 
 // UpstreamConfig describes a single upstream resolver endpoint.
 type UpstreamConfig struct {
 	// URL is the DoH/DoT/DoQ/plain DNS target.
-	URL string `json:"url"`
+	URL string `toml:"url"`
 	// Bootstrap is an optional override for hostname resolution.
-	Bootstrap string `json:"bootstrap"`
+	Bootstrap string `toml:"bootstrap"`
 	// MaxFailures defines failures before an upstream is marked unhealthy.
-	MaxFailures int `json:"max_failures"`
+	MaxFailures int `toml:"max_failures"`
 	// Cooldown specifies how long to wait before retrying an unhealthy upstream.
-	Cooldown Duration `json:"cooldown"`
+	Cooldown Duration `toml:"cooldown"`
 	// Weight influences weighted selection policies.
-	Weight int `json:"weight"`
+	Weight int `toml:"weight"`
 }
 
 // HealthCheckConfig configures active health probing.
@@ -107,87 +95,87 @@ type UpstreamConfig struct {
 // by regular query successes/failures.
 type HealthCheckConfig struct {
 	// Enabled toggles background probes.
-	Enabled bool `json:"enabled"`
+	Enabled bool `toml:"enabled"`
 	// Interval sets how often probes run.
-	Interval Duration `json:"interval"`
+	Interval Duration `toml:"interval"`
 	// Query is the DNS name used for probing.
-	Query string `json:"query"`
+	Query string `toml:"query"`
 }
 
 // CacheConfig tunes the TTL cache behavior.
 type CacheConfig struct {
 	// Enabled toggles caching.
-	Enabled bool `json:"enabled"`
+	Enabled bool `toml:"enabled"`
 	// Capacity limits stored entries.
-	Capacity int `json:"capacity"`
+	Capacity int `toml:"capacity"`
 	// DefaultTTL is applied to positive answers when record TTL is ignored.
-	DefaultTTL Duration `json:"default_ttl"`
+	DefaultTTL Duration `toml:"default_ttl"`
 	// NegativeTTL is applied to NXDOMAIN responses.
-	NegativeTTL Duration `json:"negative_ttl"`
+	NegativeTTL Duration `toml:"negative_ttl"`
 	// RespectRecordTTL honors TTL values from upstream answers.
-	RespectRecordTTL bool `json:"respect_record_ttl"`
+	RespectRecordTTL bool `toml:"respect_record_ttl"`
 }
 
 // PoolConfig tunes upstream connection reuse.
 type PoolConfig struct {
 	// TLS/QUIC pool sizes and idle timeouts for those protocols.
-	TLS  SizedPoolConfig `json:"tls"`
-	QUIC SizedPoolConfig `json:"quic"`
+	TLS  SizedPoolConfig `toml:"tls"`
+	QUIC SizedPoolConfig `toml:"quic"`
 
 	// HTTPTransport configures the underlying DoH HTTP client.
-	HTTPTransport HTTPTransportConfig `json:"http_transport"`
+	HTTPTransport HTTPTransportConfig `toml:"http_transport"`
 }
 
 // SizedPoolConfig sets pool sizes and idle handling.
 type SizedPoolConfig struct {
 	// Size is the maximum number of idle connections.
-	Size int `json:"size"`
+	Size int `toml:"size"`
 	// IdleTimeout evicts unused connections after the duration.
-	IdleTimeout Duration `json:"idle_timeout"`
+	IdleTimeout Duration `toml:"idle_timeout"`
 }
 
 // HTTPTransportConfig exposes knobs for the DoH client transport.
 type HTTPTransportConfig struct {
 	// MaxIdleConns caps total idle connections.
-	MaxIdleConns int `json:"max_idle_conns"`
+	MaxIdleConns int `toml:"max_idle_conns"`
 	// MaxIdleConnsPerHost caps idle connections per upstream host.
-	MaxIdleConnsPerHost int `json:"max_idle_conns_per_host"`
+	MaxIdleConnsPerHost int `toml:"max_idle_conns_per_host"`
 	// IdleConnTimeout evicts idle HTTP connections.
-	IdleConnTimeout Duration `json:"idle_conn_timeout"`
+	IdleConnTimeout Duration `toml:"idle_conn_timeout"`
 	// TLSHandshakeTimeout bounds handshake duration.
-	TLSHandshakeTimeout Duration `json:"tls_handshake_timeout"`
+	TLSHandshakeTimeout Duration `toml:"tls_handshake_timeout"`
 }
 
 // TimeoutConfig controls upstream interaction timeouts.
 type TimeoutConfig struct {
 	// Upstream is the overall timeout for an upstream exchange.
-	Upstream Duration `json:"upstream"`
+	Upstream Duration `toml:"upstream"`
 	// Dial bounds TCP/TLS/QUIC connection establishment.
-	Dial Duration `json:"dial"`
+	Dial Duration `toml:"dial"`
 	// Read bounds read operations on upstream sockets.
-	Read Duration `json:"read"`
+	Read Duration `toml:"read"`
 }
 
 // RateLimit caps simultaneous upstream exchanges.
 type RateLimit struct {
 	// MaxInFlight caps simultaneous upstream requests to avoid overload.
-	MaxInFlight int `json:"max_in_flight"`
+	MaxInFlight int `toml:"max_in_flight"`
 }
 
 // LoggingConfig exposes verbosity.
 type LoggingConfig struct {
 	// Level maps to the logging verbosity (info, debug, warn, ...).
-	Level string `json:"level"`
+	Level string `toml:"level"`
 }
 
 // MetricsConfig toggles instrumentation.
 type MetricsConfig struct {
 	// Enabled toggles Prometheus-style counters.
-	Enabled bool `json:"enabled"`
+	Enabled bool `toml:"enabled"`
 }
 
 // Default returns a Config pre-populated with reasonable defaults.
-// These values mirror config.default.json for convenient programmatic usage.
+// These values mirror config.default.toml for convenient programmatic usage.
 func Default() Config {
 	return Config{
 		BindAddress:        "127.0.0.35",
@@ -229,7 +217,7 @@ func Default() Config {
 	}
 }
 
-// Load parses configuration from JSON file paths. First existing path wins,
+// Load parses configuration from TOML file paths. First existing path wins,
 // otherwise defaults are returned.
 func Load(paths ...string) (Config, error) {
 	cfg := Default()
@@ -248,7 +236,7 @@ func Load(paths ...string) (Config, error) {
 		if err != nil {
 			return cfg, fmt.Errorf("read config %s: %w", p, err)
 		}
-		if err := json.Unmarshal(data, &cfg); err != nil {
+		if err := toml.Unmarshal(data, &cfg); err != nil {
 			return cfg, fmt.Errorf("parse config %s: %w", p, err)
 		}
 		return cfg, nil

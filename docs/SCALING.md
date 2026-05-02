@@ -56,23 +56,27 @@ It is feasible to evolve `secure-dns-proxy` toward dnsdist-like scalability, but
 ## Configuration guidance for load-balanced upstreams
 The current proxy supports upstream load balancing through the `upstream_policy` field. For enterprise deployments, start with latency-friendly race fanout and tune pool sizes for reuse:
 
-```jsonc
-{
-  "upstream_policy": "race",           // or "round_robin" / "sequential"
-  "upstream_race_fanout": 3,            // number of upstreams to query in parallel
-  "pools": {
-    "tls": {"size": 128, "idle_timeout": "120s"},
-    "quic": {"size": 64, "idle_timeout": "120s"},
-    "http_transport": {
-      "max_idle_conns": 512,
-      "max_idle_conns_per_host": 128,
-      "idle_conn_timeout": "120s",
-      "tls_handshake_timeout": "5s"
-    }
-  },
-  "rate_limit": {"max_in_flight": 8192},
-  "prewarm_pools": true
-}
+```toml
+upstream_policy = "race" # or "round_robin" / "sequential"
+upstream_race_fanout = 3 # number of upstreams to query in parallel
+prewarm_pools = true
+
+[pools.tls]
+size = 128
+idle_timeout = "120s"
+
+[pools.quic]
+size = 64
+idle_timeout = "120s"
+
+[pools.http_transport]
+max_idle_conns = 512
+max_idle_conns_per_host = 128
+idle_conn_timeout = "120s"
+tls_handshake_timeout = "5s"
+
+[rate_limit]
+max_in_flight = 8192
 ```
 
 For highly bursty workloads, prefer `race` with a small fanout to hide slow upstreams. For steady-state balanced load, `round_robin` provides even distribution with lower upstream amplification.

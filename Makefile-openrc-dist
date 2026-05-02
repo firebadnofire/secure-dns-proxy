@@ -15,8 +15,8 @@ CONFIG_INSTALL_MODE := 0640
 endif
 
 BIN := bin/$(PREFIX)
-DEFAULT_CONF := etc/$(PREFIX)/config.json
-EXAMPLE_CONF := etc/$(PREFIX)/config.example.json
+DEFAULT_CONF := etc/$(PREFIX)/config.toml
+EXAMPLE_CONF := etc/$(PREFIX)/config.example.toml
 OPENRC_INIT := packaging/openrc/$(PREFIX)
 SYSCTL_CONF := packaging/sysctl/$(PREFIX).conf
 
@@ -50,9 +50,9 @@ ifeq ($(DESTDIR),)
 	echo "setcap not available; OpenRC service may need root or an unprivileged port to bind DNS port 53"
 endif
 	$(INSTALL) -d -m 0750 $(CONFIG_INSTALL_OWNER) "$(DESTDIR)/etc/$(PREFIX)"
-	$(INSTALL) -m 0644 "$(EXAMPLE_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.example.json"
-	[ -f "$(DESTDIR)/etc/$(PREFIX)/config.json" ] || \
-	$(INSTALL) -m $(CONFIG_INSTALL_MODE) $(CONFIG_INSTALL_OWNER) "$(DEFAULT_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.json"
+	$(INSTALL) -m 0644 "$(EXAMPLE_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.example.toml"
+	[ -f "$(DESTDIR)/etc/$(PREFIX)/config.toml" ] || \
+	$(INSTALL) -m $(CONFIG_INSTALL_MODE) $(CONFIG_INSTALL_OWNER) "$(DEFAULT_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.toml"
 	$(INSTALL) -d "$(DESTDIR)$(OPENRC_INIT_DIR)"
 	$(INSTALL) -m 0755 "$(OPENRC_INIT)" "$(DESTDIR)$(OPENRC_INIT_DIR)/$(PREFIX)"
 	$(INSTALL) -d "$(DESTDIR)$(SYSCTL_DIR)"
@@ -69,7 +69,7 @@ endif
 
 uninstall deinstall:
 	rm -f "$(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX)"
-	rm -f "$(DESTDIR)/etc/$(PREFIX)/config.json" "$(DESTDIR)/etc/$(PREFIX)/config.example.json"
+	rm -f "$(DESTDIR)/etc/$(PREFIX)/config.toml" "$(DESTDIR)/etc/$(PREFIX)/config.example.toml"
 	rmdir "$(DESTDIR)/etc/$(PREFIX)" 2>/dev/null || true
 	rm -f "$(DESTDIR)$(OPENRC_INIT_DIR)/$(PREFIX)"
 	rm -f "$(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf"

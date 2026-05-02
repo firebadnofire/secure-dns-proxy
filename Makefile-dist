@@ -15,8 +15,8 @@ CONFIG_INSTALL_MODE := 0640
 endif
 
 BIN := bin/$(PREFIX)
-DEFAULT_CONF := etc/$(PREFIX)/config.json
-EXAMPLE_CONF := etc/$(PREFIX)/config.example.json
+DEFAULT_CONF := etc/$(PREFIX)/config.toml
+EXAMPLE_CONF := etc/$(PREFIX)/config.example.toml
 SYSTEMD_SERVICE := packaging/systemd/$(PREFIX).service
 SYSCTL_CONF := packaging/sysctl/$(PREFIX).conf
 
@@ -43,9 +43,9 @@ ifeq ($(DESTDIR),)
 	echo "setcap not available; ensure the binary can bind to privileged ports"
 endif
 	$(INSTALL) -d -m 0750 $(CONFIG_INSTALL_OWNER) "$(DESTDIR)/etc/$(PREFIX)"
-	$(INSTALL) -m 0644 "$(EXAMPLE_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.example.json"
-	[ -f "$(DESTDIR)/etc/$(PREFIX)/config.json" ] || \
-	$(INSTALL) -m $(CONFIG_INSTALL_MODE) $(CONFIG_INSTALL_OWNER) "$(DEFAULT_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.json"
+	$(INSTALL) -m 0644 "$(EXAMPLE_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.example.toml"
+	[ -f "$(DESTDIR)/etc/$(PREFIX)/config.toml" ] || \
+	$(INSTALL) -m $(CONFIG_INSTALL_MODE) $(CONFIG_INSTALL_OWNER) "$(DEFAULT_CONF)" "$(DESTDIR)/etc/$(PREFIX)/config.toml"
 	$(INSTALL) -d "$(DESTDIR)$(SYSTEMD_UNIT_DIR)"
 	$(INSTALL) -m 0644 "$(SYSTEMD_SERVICE)" "$(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service"
 	$(INSTALL) -d "$(DESTDIR)$(SYSCTL_DIR)"
@@ -63,7 +63,7 @@ endif
 
 uninstall deinstall:
 	rm -f "$(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX)"
-	rm -f "$(DESTDIR)/etc/$(PREFIX)/config.json" "$(DESTDIR)/etc/$(PREFIX)/config.example.json"
+	rm -f "$(DESTDIR)/etc/$(PREFIX)/config.toml" "$(DESTDIR)/etc/$(PREFIX)/config.example.toml"
 	rmdir "$(DESTDIR)/etc/$(PREFIX)" 2>/dev/null || true
 	rm -f "$(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service"
 	rm -f "$(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf"

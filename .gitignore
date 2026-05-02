@@ -16,6 +16,7 @@ dist
 .tmp
 build
 logs/
+ACCESS.md
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out

@@ -4,9 +4,9 @@ set -eu
 pkg=secure-dns-proxy
 bin=/usr/local/bin/$pkg
 config_dir=/etc/$pkg
-config=$config_dir/config.json
-default_config=/usr/share/$pkg/config.default.json
-example_config=$config_dir/config.example.json
+config=$config_dir/config.toml
+default_config=/usr/share/$pkg/config.default.toml
+example_config=$config_dir/config.example.toml
 init_script=/etc/init.d/$pkg
 
 if [ ! -x "$bin" ]; then

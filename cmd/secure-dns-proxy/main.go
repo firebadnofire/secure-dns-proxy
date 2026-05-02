@@ -96,7 +96,7 @@ func (s *serverInstance) shutdown(ctx context.Context) {
 func main() {
 	// Parse CLI flags; config path can be empty for defaults.
 	var cfgPath string
-	flag.StringVar(&cfgPath, "config", "", "path to JSON config")
+	flag.StringVar(&cfgPath, "config", "", "path to TOML config")
 	flag.Parse()
 
 	// Build the initial instance.

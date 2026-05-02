@@ -3,7 +3,7 @@
 name="secure-dns-proxy"
 description="Secure DNS proxy"
 command="/usr/local/bin/secure-dns-proxy"
-command_args="--config /etc/secure-dns-proxy/config.json"
+command_args="--config /etc/secure-dns-proxy/config.toml"
 command_background="yes"
 command_user="secure-dns-proxy:secure-dns-proxy"
 pidfile="/run/${RC_SVCNAME}.pid"
@@ -16,8 +16,8 @@ depend() {
 }
 
 start_pre() {
-	if [ ! -f /etc/secure-dns-proxy/config.json ]; then
-		eerror "missing /etc/secure-dns-proxy/config.json"
+	if [ ! -f /etc/secure-dns-proxy/config.toml ]; then
+		eerror "missing /etc/secure-dns-proxy/config.toml"
 		return 1
 	fi
 

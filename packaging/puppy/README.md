@@ -26,19 +26,19 @@ make pet PET_GOARCH=arm64 PET_ARCH=aarch64
 ## Install and run
 
 Install the `.pet` through Puppy Package Manager or by opening it in Puppy. The
-post-install script creates `/etc/secure-dns-proxy/config.json` only if it does
+post-install script creates `/etc/secure-dns-proxy/config.toml` only if it does
 not already exist, so package upgrades preserve local resolver settings.
 
 Review configuration before starting:
 
 ```sh
-defaulttexteditor /etc/secure-dns-proxy/config.json
+defaulttexteditor /etc/secure-dns-proxy/config.toml
 ```
 
 Start manually:
 
 ```sh
-/usr/local/bin/secure-dns-proxy --config /etc/secure-dns-proxy/config.json
+/usr/local/bin/secure-dns-proxy --config /etc/secure-dns-proxy/config.toml
 ```
 
 Or use the optional init script:

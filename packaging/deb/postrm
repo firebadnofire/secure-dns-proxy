@@ -9,7 +9,7 @@ fi
 
 case "${1:-}" in
 	purge)
-		rm -f "/etc/$pkg/config.json" "/etc/$pkg/config.example.json"
+		rm -f "/etc/$pkg/config.toml" "/etc/$pkg/config.example.toml"
 		rmdir "/etc/$pkg" 2>/dev/null || true
 		userdel "$pkg" 2>/dev/null || true
 		groupdel "$pkg" 2>/dev/null || true

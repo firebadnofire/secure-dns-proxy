@@ -5,6 +5,7 @@ go 1.23.0
 toolchain go1.24.3
 
 require (
+	github.com/BurntSushi/toml v1.4.0
 	github.com/miekg/dns v1.1.66
 	github.com/quic-go/quic-go v0.51.0
 	golang.org/x/sync v0.13.0

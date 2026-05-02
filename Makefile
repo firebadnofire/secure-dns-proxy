@@ -70,8 +70,8 @@ OPENRC_SYSCTL_CONF_STG := $(OPENRC_PKG_STG)/sysctl/$(PREFIX).conf
 OPENRC_FILE := $(DISTDIR)/$(PREFIX)-$(VERSION)-openrc.tar.gz
 
 # source config
-EXAMPLE_CONF := config.example.json
-DEFAULT_CONF := config.default.json
+EXAMPLE_CONF := config.example.toml
+DEFAULT_CONF := config.default.toml
 DIST_MAKEFILE := Makefile-dist
 DIST_README := README-dist.md
 OPENRC_DIST_MAKEFILE := Makefile-openrc-dist
@@ -136,8 +136,8 @@ $(BIN_STG): $(BUILD_BIN)
 # stage config
 $(CONF_STG):
 	mkdir -p $@
-	cp $(EXAMPLE_CONF) $(CONF_STG)/config.example.json
-	cp $(DEFAULT_CONF) $(CONF_STG)/config.json
+	cp $(EXAMPLE_CONF) $(CONF_STG)/config.example.toml
+	cp $(DEFAULT_CONF) $(CONF_STG)/config.toml
 
 # stage distribution installer as the tarball Makefile
 $(DIST_MAKEFILE_STG): $(DIST_MAKEFILE)
@@ -176,8 +176,8 @@ $(OPENRC_BIN_STG): $(BUILD_BIN)
 
 $(OPENRC_CONF_STG):
 	mkdir -p $@
-	cp $(EXAMPLE_CONF) $(OPENRC_CONF_STG)/config.example.json
-	cp $(DEFAULT_CONF) $(OPENRC_CONF_STG)/config.json
+	cp $(EXAMPLE_CONF) $(OPENRC_CONF_STG)/config.example.toml
+	cp $(DEFAULT_CONF) $(OPENRC_CONF_STG)/config.toml
 
 $(OPENRC_MAKEFILE_STG): $(OPENRC_DIST_MAKEFILE)
 	mkdir -p $(dir $@)
@@ -200,7 +200,7 @@ $(OPENRC_FILE): openrc-stage
 	tar -czf $@ -C $(OPENRC_STAGEDIR) $(PREFIX)
 
 # stage Puppy PET package contents. The package installs files directly under /
-# and lets pinstall.sh create config.json only when the user does not have one.
+# and lets pinstall.sh create config.toml only when the user does not have one.
 pet-stage: $(PET_ROOT)
 
 $(PET_ROOT): $(PET_BIN) $(EXAMPLE_CONF) $(DEFAULT_CONF) LICENSE $(PUPPY_PINSTALL) $(PUPPY_PUNINSTALL) $(PUPPY_INIT) $(PUPPY_README)
@@ -212,8 +212,8 @@ $(PET_ROOT): $(PET_BIN) $(EXAMPLE_CONF) $(DEFAULT_CONF) LICENSE $(PUPPY_PINSTALL
 	mkdir -p $(PET_ROOT)/usr/share/doc/$(PREFIX)
 	cp $(PET_BIN) $(PET_ROOT)/usr/local/bin/$(PREFIX)
 	chmod 0755 $(PET_ROOT)/usr/local/bin/$(PREFIX)
-	cp $(EXAMPLE_CONF) $(PET_ROOT)/etc/$(PREFIX)/config.example.json
-	cp $(DEFAULT_CONF) $(PET_ROOT)/usr/share/$(PREFIX)/config.default.json
+	cp $(EXAMPLE_CONF) $(PET_ROOT)/etc/$(PREFIX)/config.example.toml
+	cp $(DEFAULT_CONF) $(PET_ROOT)/usr/share/$(PREFIX)/config.default.toml
 	cp $(PUPPY_INIT) $(PET_ROOT)/etc/init.d/$(PREFIX)
 	chmod 0755 $(PET_ROOT)/etc/init.d/$(PREFIX)
 	cp $(PUPPY_PINSTALL) $(PET_ROOT)/pinstall.sh
@@ -249,7 +249,7 @@ $(PET_FILE): $(PET_TGZ)
 	printf '%s' "$$digest" >> "$$tmp"; \
 	mv "$$tmp" "$@"
 
-# Debian package. config.json is created by postinst only when absent, so
+# Debian package. config.toml is created by postinst only when absent, so
 # package upgrades do not overwrite the active resolver configuration.
 deb-stage: $(DEB_ROOT)
 
@@ -264,8 +264,8 @@ $(DEB_ROOT): $(DEB_BIN) $(EXAMPLE_CONF) $(DEFAULT_CONF) LICENSE $(SYSTEMD_SERVIC
 	mkdir -p $(DEB_ROOT)/usr/share/doc/$(PREFIX)
 	cp $(DEB_BIN) $(DEB_ROOT)/usr/local/bin/$(PREFIX)
 	chmod 0755 $(DEB_ROOT)/usr/local/bin/$(PREFIX)
-	cp $(EXAMPLE_CONF) $(DEB_ROOT)/etc/$(PREFIX)/config.example.json
-	cp $(DEFAULT_CONF) $(DEB_ROOT)/usr/share/$(PREFIX)/config.default.json
+	cp $(EXAMPLE_CONF) $(DEB_ROOT)/etc/$(PREFIX)/config.example.toml
+	cp $(DEFAULT_CONF) $(DEB_ROOT)/usr/share/$(PREFIX)/config.default.toml
 	cp $(SYSTEMD_SERVICE) $(DEB_ROOT)$(DEB_SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	cp $(SYSCTL_CONF) $(DEB_ROOT)$(SYSCTL_DIR)/80-$(PREFIX).conf
 	cp LICENSE $(DEB_ROOT)/usr/share/doc/$(PREFIX)/copyright
@@ -308,8 +308,8 @@ $(RPM_PAYLOAD_ROOT): $(RPM_BIN) $(EXAMPLE_CONF) $(DEFAULT_CONF) LICENSE $(SYSTEM
 	mkdir -p $(RPM_PAYLOAD_ROOT)/usr/share/doc/$(PREFIX)
 	cp $(RPM_BIN) $(RPM_PAYLOAD_ROOT)/usr/local/bin/$(PREFIX)
 	chmod 0755 $(RPM_PAYLOAD_ROOT)/usr/local/bin/$(PREFIX)
-	cp $(EXAMPLE_CONF) $(RPM_PAYLOAD_ROOT)/etc/$(PREFIX)/config.example.json
-	cp $(DEFAULT_CONF) $(RPM_PAYLOAD_ROOT)/usr/share/$(PREFIX)/config.default.json
+	cp $(EXAMPLE_CONF) $(RPM_PAYLOAD_ROOT)/etc/$(PREFIX)/config.example.toml
+	cp $(DEFAULT_CONF) $(RPM_PAYLOAD_ROOT)/usr/share/$(PREFIX)/config.default.toml
 	cp $(SYSTEMD_SERVICE) $(RPM_PAYLOAD_ROOT)$(RPM_SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	cp $(SYSCTL_CONF) $(RPM_PAYLOAD_ROOT)$(SYSCTL_DIR)/80-$(PREFIX).conf
 	cp LICENSE $(RPM_PAYLOAD_ROOT)/usr/share/doc/$(PREFIX)/LICENSE
@@ -342,8 +342,8 @@ $(RPM_SPEC): Makefile
 		printf 'getent group %s >/dev/null 2>&1 || groupadd -r %s\n' "$(PREFIX)" "$(PREFIX)"; \
 		printf 'id -u %s >/dev/null 2>&1 || useradd -r -g %s -s /usr/sbin/nologin -d /nonexistent -M %s\n' "$(PREFIX)" "$(PREFIX)" "$(PREFIX)"; \
 		printf '\n%%post\n'; \
-		printf 'config=/etc/%s/config.json\n' "$(PREFIX)"; \
-		printf 'default_config=/usr/share/%s/config.default.json\n' "$(PREFIX)"; \
+		printf 'config=/etc/%s/config.toml\n' "$(PREFIX)"; \
+		printf 'default_config=/usr/share/%s/config.default.toml\n' "$(PREFIX)"; \
 		printf 'if [ ! -f "$$config" ]; then install -m 0640 -o %s -g %s "$$default_config" "$$config"; fi\n' "$(PREFIX)" "$(PREFIX)"; \
 		printf 'if command -v setcap >/dev/null 2>&1; then setcap '"'"'cap_net_bind_service=+ep'"'"' /usr/local/bin/%s || echo "warning: setcap failed; systemd capabilities are still configured" >&2; fi\n' "$(PREFIX)"; \
 		printf 'systemctl daemon-reload >/dev/null 2>&1 || true\n'; \
@@ -355,9 +355,9 @@ $(RPM_SPEC): Makefile
 		printf '\n%%files\n'; \
 		printf '%%license /usr/share/doc/%s/LICENSE\n' "$(PREFIX)"; \
 		printf '%%dir /etc/%s\n' "$(PREFIX)"; \
-		printf '%%config(noreplace) /etc/%s/config.example.json\n' "$(PREFIX)"; \
+		printf '%%config(noreplace) /etc/%s/config.example.toml\n' "$(PREFIX)"; \
 		printf '/usr/local/bin/%s\n' "$(PREFIX)"; \
-		printf '/usr/share/%s/config.default.json\n' "$(PREFIX)"; \
+		printf '/usr/share/%s/config.default.toml\n' "$(PREFIX)"; \
 		printf '/usr/lib/systemd/system/%s.service\n' "$(PREFIX)"; \
 		printf '/etc/sysctl.d/80-%s.conf\n' "$(PREFIX)"; \
 		printf '\n%%changelog\n'; \
@@ -401,9 +401,9 @@ install:
 	setcap 'cap_net_bind_service=+ep' $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX) || \
 	echo "setcap not available; ensure the binary can bind to privileged ports"
 	$(INSTALL) -d -m 0750 -o $(PREFIX) -g $(PREFIX) $(DESTDIR)/etc/$(PREFIX)
-	$(INSTALL) -m 0644 $(EXAMPLE_CONF) $(DESTDIR)/etc/$(PREFIX)/config.example.json
-	[ -f $(DESTDIR)/etc/$(PREFIX)/config.json ] || \
-	$(INSTALL) -m 0640 -o $(PREFIX) -g $(PREFIX) $(DEFAULT_CONF) $(DESTDIR)/etc/$(PREFIX)/config.json
+	$(INSTALL) -m 0644 $(EXAMPLE_CONF) $(DESTDIR)/etc/$(PREFIX)/config.example.toml
+	[ -f $(DESTDIR)/etc/$(PREFIX)/config.toml ] || \
+	$(INSTALL) -m 0640 -o $(PREFIX) -g $(PREFIX) $(DEFAULT_CONF) $(DESTDIR)/etc/$(PREFIX)/config.toml
 	$(INSTALL) -d $(DESTDIR)$(SYSTEMD_UNIT_DIR)
 	$(INSTALL) -m 0644 $(SYSTEMD_SERVICE) $(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	$(INSTALL) -d $(DESTDIR)$(SYSCTL_DIR)
@@ -420,7 +420,7 @@ upgrade:
 
 uninstall deinstall:
 	rm -f $(DESTDIR)$(INSTALL_PREFIX)/bin/$(PREFIX)
-	rm -f $(DESTDIR)/etc/$(PREFIX)/config.json $(DESTDIR)/etc/$(PREFIX)/config.example.json
+	rm -f $(DESTDIR)/etc/$(PREFIX)/config.toml $(DESTDIR)/etc/$(PREFIX)/config.example.toml
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)/etc/$(PREFIX) 2>/dev/null || true
 	rm -f $(DESTDIR)$(SYSTEMD_UNIT_DIR)/$(PREFIX).service
 	rm -f $(DESTDIR)$(SYSCTL_DIR)/80-$(PREFIX).conf

@@ -18,14 +18,14 @@ installs the binary to `/usr/local/bin`, installs configuration under
 `/etc/secure-dns-proxy`, installs the OpenRC init script, and installs the sysctl
 drop-in used for UDP buffer sizing.
 
-An existing `/etc/secure-dns-proxy/config.json` is preserved.
+An existing `/etc/secure-dns-proxy/config.toml` is preserved.
 
 ## Configure and start
 
 Review the installed configuration before starting the service:
 
 ```sh
-sudo editor /etc/secure-dns-proxy/config.json
+sudo editor /etc/secure-dns-proxy/config.toml
 sudo rc-service secure-dns-proxy start
 ```
 

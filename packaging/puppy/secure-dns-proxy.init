@@ -2,7 +2,7 @@
 
 pkg=secure-dns-proxy
 bin=/usr/local/bin/$pkg
-config=/etc/$pkg/config.json
+config=/etc/$pkg/config.toml
 pidfile=/var/run/$pkg.pid
 logfile=/var/log/$pkg.log
 

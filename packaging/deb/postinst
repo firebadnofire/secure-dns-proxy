@@ -3,8 +3,8 @@ set -eu
 
 pkg=secure-dns-proxy
 config_dir=/etc/$pkg
-config=$config_dir/config.json
-default_config=/usr/share/$pkg/config.default.json
+config=$config_dir/config.toml
+default_config=/usr/share/$pkg/config.default.toml
 bin=/usr/local/bin/$pkg
 
 ensure_group() {

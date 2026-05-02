@@ -33,10 +33,10 @@ Build with Go 1.22 or newer:
 go build ./cmd/secure-dns-proxy
 ```
 
-Run with a JSON configuration file:
+Run with a TOML configuration file:
 
 ```sh
-./secure-dns-proxy --config config.example.json
+./secure-dns-proxy --config config.example.toml
 ```
 
 ## Installation
@@ -47,7 +47,7 @@ Use the provided Makefile to install the binary, default/example configuration, 
 sudo make install
 ```
 
-By default this places the binary in `/usr/local/bin`, a runnable config in `/etc/secure-dns-proxy/config.json`, an example config at `/etc/secure-dns-proxy/config.example.json`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. The installer also creates a dedicated `secure-dns-proxy` system user/group and owns the runnable config and `/etc/secure-dns-proxy` directory to that account.
+By default this places the binary in `/usr/local/bin`, a runnable config in `/etc/secure-dns-proxy/config.toml`, an example config at `/etc/secure-dns-proxy/config.example.toml`, a systemd unit at `/etc/systemd/system/secure-dns-proxy.service`, and a sysctl drop-in at `/etc/sysctl.d/80-secure-dns-proxy.conf`. The installer also creates a dedicated `secure-dns-proxy` system user/group and owns the runnable config and `/etc/secure-dns-proxy` directory to that account.
 
 To upgrade an existing installation while preserving user accounts and configuration files, rebuild and replace the binaries:
 
@@ -103,57 +103,69 @@ make openrc-package VERSION=v1.1.4-linux-arm64
 The `.deb` target requires `dpkg-deb`; the `.rpm` target requires `rpmbuild`.
 The PET, DEB, and RPM packages install `/usr/local/bin/secure-dns-proxy`, install
 an example configuration, and preserve an existing
-`/etc/secure-dns-proxy/config.json` by creating it from the default template only
+`/etc/secure-dns-proxy/config.toml` by creating it from the default template only
 when it does not already exist. Puppy and OpenRC systems do not provide the
 systemd sandboxing used by the systemd tarball and systemd packages; review
 `packaging/puppy/README.md` or the OpenRC release README before distributing or
 enabling those packages.
 
-### Example configuration (config.example.json)
-```json
-{
-  "bind_address": "127.0.0.35",
-  "port": 53,
-  "insecure_tls": false,
-  "upstream_policy": "round_robin",
-  "upstream_race_fanout": 2,
-  "upstreams": [
-    {"url": "https://doh.archuser.org/dns-query"},
-    {"url": "tls://doh.archuser.org:853"},
-    {"url": "quic://dns.adguard-dns.com:853"}
-  ],
-  "cache": {
-    "enabled": true,
-    "capacity": 2048,
-    "default_ttl": "15s",
-    "negative_ttl": "10s",
-    "respect_record_ttl": true
-  },
-  "pools": {
-    "tls": {"size": 16, "idle_timeout": "90s"},
-    "quic": {"size": 8, "idle_timeout": "90s"},
-    "http_transport": {
-      "max_idle_conns": 128,
-      "max_idle_conns_per_host": 32,
-      "idle_conn_timeout": "90s",
-      "tls_handshake_timeout": "5s"
-    }
-  },
-  "timeouts": {
-    "upstream": "5s",
-    "dial": "2s",
-    "read": "3s"
-  },
-  "rate_limit": {"max_in_flight": 1024},
-  "logging": {"level": "info"},
-  "metrics": {"enabled": true},
-  "prewarm_pools": true,
-  "health_checks": {
-    "enabled": true,
-    "interval": "120s",
-    "query": "."
-  }
-}
+### Example configuration (config.example.toml)
+```toml
+bind_address = "127.0.0.35"
+port = 53
+insecure_tls = false
+upstream_policy = "round_robin"
+upstream_race_fanout = 2
+prewarm_pools = true
+
+[[upstreams]]
+url = "https://doh.archuser.org/dns-query"
+
+[[upstreams]]
+url = "tls://doh.archuser.org:853"
+
+[[upstreams]]
+url = "quic://dns.adguard-dns.com:853"
+
+[cache]
+enabled = true
+capacity = 2048
+default_ttl = "15s"
+negative_ttl = "10s"
+respect_record_ttl = true
+
+[pools.tls]
+size = 16
+idle_timeout = "90s"
+
+[pools.quic]
+size = 8
+idle_timeout = "90s"
+
+[pools.http_transport]
+max_idle_conns = 128
+max_idle_conns_per_host = 32
+idle_conn_timeout = "90s"
+tls_handshake_timeout = "5s"
+
+[timeouts]
+upstream = "5s"
+dial = "2s"
+read = "3s"
+
+[rate_limit]
+max_in_flight = 1024
+
+[logging]
+level = "info"
+
+[metrics]
+enabled = true
+
+[health_checks]
+enabled = true
+interval = "120s"
+query = "."
 ```
 
 > **Cold start tip:** enabling `prewarm_pools` primes DoT/DoQ connections during startup. If prewarming cannot complete (e.g.,
