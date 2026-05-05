@@ -102,9 +102,21 @@ func (d *DoT) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 
 // MakeTLSFactory returns a dialer for the TLS pool.
 // It wraps the net.Dialer and TLS config into a factory callback.
-func MakeTLSFactory(address string, tlsConfig *tls.Config, dialer *net.Dialer) pool.TLSConnFactory {
+func MakeTLSFactory(targets *bootstrapDialTargets, tlsConfig *tls.Config, dialer *net.Dialer) pool.TLSConnFactory {
 	return func(ctx context.Context) (net.Conn, error) {
-		d := tls.Dialer{NetDialer: dialer, Config: tlsConfig}
-		return d.DialContext(ctx, "tcp", address)
+		rawConn, err := targets.dialContext(ctx, "tcp", dialer.DialContext)
+		if err != nil {
+			return nil, err
+		}
+		conf := tlsConfig.Clone()
+		if conf.ServerName == "" {
+			conf.ServerName = targets.hostname
+		}
+		tlsConn := tls.Client(rawConn, conf)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = rawConn.Close()
+			return nil, err
+		}
+		return tlsConn, nil
 	}
 }

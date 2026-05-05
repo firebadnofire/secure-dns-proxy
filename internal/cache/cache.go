@@ -19,8 +19,6 @@ type entry struct {
 	msg *dns.Msg
 	// expires indicates when the entry becomes stale.
 	expires time.Time
-	// negative tracks NXDOMAIN-like responses for TTL calculation.
-	negative bool
 }
 
 // Cache implements TTL-based positive and negative caching with request
@@ -97,7 +95,7 @@ func (c *Cache) Get(key string) (*dns.Msg, bool) {
 }
 
 // Set inserts a response into the cache.
-func (c *Cache) Set(key string, msg *dns.Msg, ttl time.Duration, negative bool) {
+func (c *Cache) Set(key string, msg *dns.Msg, ttl time.Duration) {
 	if !c.cfg.Enabled || ttl <= 0 {
 		return
 	}
@@ -111,7 +109,7 @@ func (c *Cache) Set(key string, msg *dns.Msg, ttl time.Duration, negative bool) 
 		delete(c.entries, oldestKey)
 	}
 
-	c.entries[key] = entry{msg: msg.Copy(), expires: time.Now().Add(ttl), negative: negative}
+	c.entries[key] = entry{msg: msg.Copy(), expires: time.Now().Add(ttl)}
 	c.order = append(c.order, key)
 }
 
@@ -130,21 +128,24 @@ func (c *Cache) Fetch(ctx context.Context, key string, loader func(context.Conte
 	}
 	msg := res.(*dns.Msg)
 
-	ttl, negative := c.ttlForMessage(msg)
-	c.Set(key, msg, ttl, negative)
+	ttl, cacheable := c.ttlForMessage(msg)
+	if cacheable {
+		c.Set(key, msg, ttl)
+	}
 	return msg.Copy(), false, nil
 }
 
 // ttlForMessage determines the cache TTL for the provided DNS response and
-// returns whether the response is negative.
+// returns whether the response is cacheable.
 func (c *Cache) ttlForMessage(msg *dns.Msg) (time.Duration, bool) {
 	if msg == nil {
 		return 0, false
 	}
-	negative := len(msg.Answer) == 0 && msg.Rcode != dns.RcodeSuccess
+	kind := classifyResponse(msg)
 
 	var ttlSeconds uint32
-	if negative {
+	switch kind {
+	case responseNXDOMAIN, responseNODATA:
 		ttlSeconds = uint32(c.cfg.NegativeTTL.Duration().Seconds())
 		for _, ns := range msg.Ns {
 			if soa, ok := ns.(*dns.SOA); ok {
@@ -152,13 +153,42 @@ func (c *Cache) ttlForMessage(msg *dns.Msg) (time.Duration, bool) {
 				break
 			}
 		}
-	} else {
+		return time.Duration(ttlSeconds) * time.Second, true
+	case responsePositive:
 		ttlSeconds = uint32(c.cfg.DefaultTTL.Duration().Seconds())
 		if c.cfg.RespectRecordTTL {
 			ttlSeconds = minTTL(msg.Answer)
 		}
+		return time.Duration(ttlSeconds) * time.Second, true
+	default:
+		return 0, false
 	}
-	return time.Duration(ttlSeconds) * time.Second, negative
+}
+
+type responseKind uint8
+
+const (
+	responseUncacheable responseKind = iota
+	responsePositive
+	responseNXDOMAIN
+	responseNODATA
+)
+
+func classifyResponse(msg *dns.Msg) responseKind {
+	if msg == nil {
+		return responseUncacheable
+	}
+	switch msg.Rcode {
+	case dns.RcodeNameError:
+		return responseNXDOMAIN
+	case dns.RcodeSuccess:
+		if len(msg.Answer) == 0 {
+			return responseNODATA
+		}
+		return responsePositive
+	default:
+		return responseUncacheable
+	}
 }
 
 // minTTL returns the smallest TTL among a list of DNS resource records.

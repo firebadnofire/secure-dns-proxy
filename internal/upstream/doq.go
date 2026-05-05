@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"net"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -172,10 +171,10 @@ func readDoQMessage(r io.Reader) (*dns.Msg, error) {
 }
 
 // MakeQUICFactory constructs a QUIC dialer suitable for pooling.
-func MakeQUICFactory(address string, tlsConf *tls.Config, dialer *net.Dialer) pool.QUICConnFactory {
+func MakeQUICFactory(targets *bootstrapDialTargets, tlsConf *tls.Config) pool.QUICConnFactory {
 	return func(ctx context.Context) (quic.Connection, error) {
-		d := *dialer
-		d.Timeout = 0
-		return quic.DialAddrEarly(ctx, address, tlsConf, &quic.Config{KeepAlivePeriod: 30 * time.Second})
+		return targets.dialQUIC(ctx, func(dialCtx context.Context, addr string) (quic.EarlyConnection, error) {
+			return quic.DialAddrEarly(dialCtx, addr, tlsConf, &quic.Config{KeepAlivePeriod: 30 * time.Second})
+		})
 	}
 }

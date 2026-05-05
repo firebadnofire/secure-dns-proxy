@@ -43,18 +43,32 @@ type Manager struct {
 
 // BuildManager constructs upstream clients and pools from config.
 func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metrics) (*Manager, *http.Client, error) {
+	if err := cfg.Normalize(); err != nil {
+		return nil, nil, err
+	}
+
+	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
+	bootstrapDialers, err := buildBootstrapDialers(cfg.Upstreams)
+	if err != nil {
+		return nil, nil, err
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
+
 	// Shared HTTP transport for DoH upstreams.
 	transport := &http.Transport{
 		MaxIdleConns:        cfg.Pools.HTTPTransport.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Pools.HTTPTransport.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.Pools.HTTPTransport.IdleConnTimeout.Duration(),
 		TLSHandshakeTimeout: cfg.Pools.HTTPTransport.TLSHandshakeTimeout.Duration(),
+		TLSClientConfig:     tlsConfig.Clone(),
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if targets, ok := bootstrapDialers[addr]; ok {
+				return targets.dialContext(ctx, network, dialer.DialContext)
+			}
+			return dialer.DialContext(ctx, network, addr)
+		},
 	}
 	httpClient := &http.Client{Transport: transport}
-
-	// TLS config and dialer are shared across TLS/QUIC upstreams.
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureTLS}
-	dialer := &net.Dialer{Timeout: cfg.Timeouts.Dial.Duration()}
 
 	// Manager stores policy and health check configuration.
 	mgr := &Manager{policy: cfg.UpstreamPolicy, fanout: cfg.UpstreamRaceFanout, log: log, metrics: metrics, healthCfg: cfg.HealthChecks, upstreamTimeout: cfg.Timeouts.Upstream.Duration()}
@@ -101,8 +115,16 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "853")
 		}
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tls upstream %s: %w", target, err)
+		}
+		targets, err := newBootstrapDialTargets(host, port, upCfg.Bootstrap, upCfg.BootstrapStrategy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tls bootstrap %s: %w", target, err)
+		}
 		// TLS pools reuse encrypted connections.
-		factory := MakeTLSFactory(addr, tlsConf, dialer)
+		factory := MakeTLSFactory(targets, tlsConf, dialer)
 		tlsPool := pool.NewTLSConnPool(cfg.Pools.TLS.Size, cfg.Pools.TLS.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go tlsPool.Prewarm(context.Background())
@@ -114,7 +136,7 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if !strings.Contains(addr, ":") {
 			addr = net.JoinHostPort(addr, "784")
 		}
-		host, _, err := net.SplitHostPort(addr)
+		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid quic upstream %s: %w", target, err)
 		}
@@ -123,8 +145,12 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 		if quicTLS.ServerName == "" {
 			quicTLS.ServerName = host
 		}
+		targets, err := newBootstrapDialTargets(host, port, upCfg.Bootstrap, upCfg.BootstrapStrategy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid quic bootstrap %s: %w", target, err)
+		}
 		// QUIC pools reuse connections and enable 0-RTT when possible.
-		factory := MakeQUICFactory(addr, quicTLS, dialer)
+		factory := MakeQUICFactory(targets, quicTLS)
 		quicPool := pool.NewQUICConnPool(cfg.Pools.QUIC.Size, cfg.Pools.QUIC.IdleTimeout.Duration(), factory, log, metrics)
 		if cfg.PrewarmPools {
 			go quicPool.Prewarm(context.Background())
@@ -133,6 +159,40 @@ func buildUpstream(upCfg config.UpstreamConfig, cfg config.Config, httpClient *h
 	default:
 		return nil, fmt.Errorf("unsupported scheme %s", parsed.Scheme)
 	}
+}
+
+func buildBootstrapDialers(upstreams []config.UpstreamConfig) (map[string]*bootstrapDialTargets, error) {
+	dialers := make(map[string]*bootstrapDialTargets)
+	for _, upCfg := range upstreams {
+		if len(upCfg.Bootstrap) == 0 {
+			continue
+		}
+		target := upCfg.URL
+		if !strings.Contains(target, "://") {
+			target = "dns://" + target
+		}
+		parsed, err := url.Parse(target)
+		if err != nil {
+			return nil, fmt.Errorf("invalid upstream %s: %w", target, err)
+		}
+		if parsed.Scheme != "https" {
+			continue
+		}
+		addr := parsed.Host
+		if !strings.Contains(addr, ":") {
+			addr = net.JoinHostPort(addr, "443")
+		}
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid https upstream %s: %w", target, err)
+		}
+		targets, err := newBootstrapDialTargets(host, port, upCfg.Bootstrap, upCfg.BootstrapStrategy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid https bootstrap %s: %w", target, err)
+		}
+		dialers[addr] = targets
+	}
+	return dialers, nil
 }
 
 // Resolve forwards the query according to the configured policy.

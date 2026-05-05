@@ -120,6 +120,8 @@ prewarm_pools = true
 
 [[upstreams]]
 url = "https://doh.archuser.org/dns-query"
+bootstrap = ["9.9.9.9", "149.112.112.112"]
+bootstrap_strategy = "failover"
 
 [[upstreams]]
 url = "tls://doh.archuser.org:853"
@@ -171,6 +173,10 @@ query = "."
 > **Cold start tip:** enabling `prewarm_pools` primes DoT/DoQ connections during startup. If prewarming cannot complete (e.g.,
 > due to firewalls or ALPN mismatches), the first live query may spend extra time establishing connections before reusing pool
 > state for subsequent lookups.
+
+> **Bootstrap tip:** `bootstrap` accepts either a single IP string or an array of IP strings. When set for DoH, DoT, or DoQ,
+> the proxy dials those IPs directly without using system DNS, while still using the upstream hostname for HTTP host routing,
+> TLS SNI, and certificate validation. `bootstrap_strategy` defaults to `failover` and also supports `race` and `round_robin`.
 
 ### Notes on architecture changes
 - **DoH transport reuse:** a single tuned `http.Client` backs all DoH requests to preserve keep-alives.

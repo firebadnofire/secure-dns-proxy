@@ -98,11 +98,17 @@ query = "example.org."
 	if len(cfg.Upstreams) != 2 {
 		t.Fatalf("upstreams = %d", len(cfg.Upstreams))
 	}
-	if cfg.Upstreams[0].Bootstrap != "192.0.2.10" {
-		t.Fatalf("bootstrap[0] = %q", cfg.Upstreams[0].Bootstrap)
+	if len(cfg.Upstreams[0].Bootstrap) != 1 || cfg.Upstreams[0].Bootstrap[0].String() != "192.0.2.10" {
+		t.Fatalf("bootstrap[0] = %v", cfg.Upstreams[0].Bootstrap)
+	}
+	if cfg.Upstreams[0].BootstrapStrategy != "failover" {
+		t.Fatalf("bootstrap_strategy[0] = %q", cfg.Upstreams[0].BootstrapStrategy)
 	}
 	if cfg.Upstreams[0].Cooldown.Duration() != 45*time.Second {
 		t.Fatalf("cooldown = %s", cfg.Upstreams[0].Cooldown.Duration())
+	}
+	if len(cfg.Upstreams[1].Bootstrap) != 1 || cfg.Upstreams[1].Bootstrap[0].String() != "192.0.2.20" {
+		t.Fatalf("bootstrap[1] = %v", cfg.Upstreams[1].Bootstrap)
 	}
 	if cfg.Upstreams[1].Cooldown.Duration() != 120*time.Second {
 		t.Fatalf("cooldown[1] = %s", cfg.Upstreams[1].Cooldown.Duration())
@@ -291,6 +297,55 @@ func TestLoadMissingConfig(t *testing.T) {
 	}
 	if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no configuration file found") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadParsesBootstrapArrayAndStrategy(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfigFile(t, "bootstrap-array.toml", `
+[[upstreams]]
+url = "quic://resolver.example:784"
+bootstrap = ["192.0.2.10", "2001:db8::1"]
+bootstrap_strategy = "round_robin"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(cfg.Upstreams) != 1 {
+		t.Fatalf("upstreams = %d", len(cfg.Upstreams))
+	}
+	if len(cfg.Upstreams[0].Bootstrap) != 2 {
+		t.Fatalf("bootstrap len = %d", len(cfg.Upstreams[0].Bootstrap))
+	}
+	if cfg.Upstreams[0].Bootstrap[0].String() != "192.0.2.10" {
+		t.Fatalf("bootstrap[0] = %s", cfg.Upstreams[0].Bootstrap[0])
+	}
+	if cfg.Upstreams[0].Bootstrap[1].String() != "2001:db8::1" {
+		t.Fatalf("bootstrap[1] = %s", cfg.Upstreams[0].Bootstrap[1])
+	}
+	if cfg.Upstreams[0].BootstrapStrategy != "round_robin" {
+		t.Fatalf("bootstrap_strategy = %q", cfg.Upstreams[0].BootstrapStrategy)
+	}
+}
+
+func TestLoadRejectsNonIPBootstrap(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfigFile(t, "bad-bootstrap.toml", `
+[[upstreams]]
+url = "https://resolver.example/dns-query"
+bootstrap = "resolver.example"
+`)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "not an IP address") {
+		t.Fatalf("error = %q", err)
 	}
 }
 

@@ -5,7 +5,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -81,7 +83,9 @@ type UpstreamConfig struct {
 	// URL is the DoH/DoT/DoQ/plain DNS target.
 	URL string `toml:"url"`
 	// Bootstrap is an optional override for hostname resolution.
-	Bootstrap string `toml:"bootstrap"`
+	Bootstrap BootstrapIPs `toml:"bootstrap"`
+	// BootstrapStrategy controls how bootstrap IPs are attempted.
+	BootstrapStrategy string `toml:"bootstrap_strategy"`
 	// MaxFailures defines failures before an upstream is marked unhealthy.
 	MaxFailures int `toml:"max_failures"`
 	// Cooldown specifies how long to wait before retrying an unhealthy upstream.
@@ -174,6 +178,51 @@ type MetricsConfig struct {
 	Enabled bool `toml:"enabled"`
 }
 
+// BootstrapIPs stores normalized bootstrap addresses as literal IPs.
+type BootstrapIPs []net.IP
+
+// UnmarshalTOML accepts either a single IP string or a list of IP strings.
+func (b *BootstrapIPs) UnmarshalTOML(v any) error {
+	if v == nil {
+		*b = nil
+		return nil
+	}
+
+	switch value := v.(type) {
+	case string:
+		ips, err := parseBootstrapIPs([]string{value})
+		if err != nil {
+			return err
+		}
+		*b = ips
+		return nil
+	case []string:
+		ips, err := parseBootstrapIPs(value)
+		if err != nil {
+			return err
+		}
+		*b = ips
+		return nil
+	case []any:
+		raw := make([]string, 0, len(value))
+		for _, item := range value {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("bootstrap must be a string or array of strings")
+			}
+			raw = append(raw, s)
+		}
+		ips, err := parseBootstrapIPs(raw)
+		if err != nil {
+			return err
+		}
+		*b = ips
+		return nil
+	default:
+		return fmt.Errorf("bootstrap must be a string or array of strings")
+	}
+}
+
 // Default returns a Config pre-populated with reasonable defaults.
 // These values mirror config.default.toml for convenient programmatic usage.
 func Default() Config {
@@ -222,6 +271,9 @@ func Default() Config {
 func Load(paths ...string) (Config, error) {
 	cfg := Default()
 	if len(paths) == 0 {
+		if err := cfg.Normalize(); err != nil {
+			return cfg, err
+		}
 		return cfg, nil
 	}
 
@@ -239,8 +291,58 @@ func Load(paths ...string) (Config, error) {
 		if err := toml.Unmarshal(data, &cfg); err != nil {
 			return cfg, fmt.Errorf("parse config %s: %w", p, err)
 		}
+		if err := cfg.Normalize(); err != nil {
+			return cfg, fmt.Errorf("validate config %s: %w", p, err)
+		}
 		return cfg, nil
 	}
 
 	return cfg, fmt.Errorf("no configuration file found in %v", paths)
+}
+
+// Normalize applies defaults and validates cross-field configuration.
+func (c *Config) Normalize() error {
+	for i := range c.Upstreams {
+		if err := c.Upstreams[i].Normalize(); err != nil {
+			return fmt.Errorf("upstreams[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// Normalize applies defaults and validates a single upstream entry.
+func (u *UpstreamConfig) Normalize() error {
+	if u.BootstrapStrategy == "" {
+		u.BootstrapStrategy = "failover"
+	}
+	switch u.BootstrapStrategy {
+	case "failover", "race", "round_robin":
+	default:
+		return fmt.Errorf("invalid bootstrap_strategy %q", u.BootstrapStrategy)
+	}
+	if len(u.Bootstrap) == 0 {
+		return nil
+	}
+	for _, ip := range u.Bootstrap {
+		if ip == nil {
+			return fmt.Errorf("bootstrap contains invalid ip")
+		}
+	}
+	return nil
+}
+
+func parseBootstrapIPs(values []string) (BootstrapIPs, error) {
+	ips := make(BootstrapIPs, 0, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			return nil, fmt.Errorf("bootstrap contains empty ip")
+		}
+		ip := net.ParseIP(value)
+		if ip == nil {
+			return nil, fmt.Errorf("bootstrap value %q is not an IP address", raw)
+		}
+		ips = append(ips, append(net.IP(nil), ip...))
+	}
+	return ips, nil
 }
