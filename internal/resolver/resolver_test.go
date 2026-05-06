@@ -55,7 +55,7 @@ func TestResolvePreservesNXDOMAINThroughCache(t *testing.T) {
 
 	addr := pc.LocalAddr().(*net.UDPAddr)
 	cfg := config.Default()
-	cfg.Upstreams = []config.UpstreamConfig{{URL: net.JoinHostPort("127.0.0.1", strconv.Itoa(addr.Port))}}
+	cfg.UpstreamGroups.DNS = []string{net.JoinHostPort("127.0.0.1", strconv.Itoa(addr.Port))}
 	cfg.Cache = config.CacheConfig{
 		Enabled:          true,
 		Capacity:         8,

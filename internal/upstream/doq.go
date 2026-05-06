@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -19,8 +20,8 @@ import (
 
 // DoQ implements DNS-over-QUIC exchanges.
 type DoQ struct {
-	// address is the QUIC endpoint host:port.
-	address string
+	// source provides refreshable addresses for the upstream.
+	source *addressSource
 	// pool provides reusable QUIC connections.
 	pool *pool.QUICConnPool
 	// tlsConf configures TLS for the QUIC connection.
@@ -34,12 +35,12 @@ type DoQ struct {
 }
 
 // NewDoQ constructs a DoQ upstream with pooled QUIC connections.
-func NewDoQ(cfg config.UpstreamConfig, pool *pool.QUICConnPool, tlsConf *tls.Config, trackTraffic bool, healthEnabled bool) *DoQ {
-	return &DoQ{address: cfg.URL, pool: pool, tlsConf: tlsConf, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
+func NewDoQ(cfg config.UpstreamConfig, source *addressSource, pool *pool.QUICConnPool, tlsConf *tls.Config, trackTraffic bool, healthEnabled bool) *DoQ {
+	return &DoQ{source: source, pool: pool, tlsConf: tlsConf, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
 }
 
 // ID returns the upstream address for logging and selection.
-func (d *DoQ) ID() string { return d.address }
+func (d *DoQ) ID() string { return net.JoinHostPort(d.source.hostname, d.source.port) }
 
 // Healthy reports whether the upstream is eligible for use.
 func (d *DoQ) Healthy() bool { return d.health.healthy() }
@@ -171,7 +172,7 @@ func readDoQMessage(r io.Reader) (*dns.Msg, error) {
 }
 
 // MakeQUICFactory constructs a QUIC dialer suitable for pooling.
-func MakeQUICFactory(targets *bootstrapDialTargets, tlsConf *tls.Config) pool.QUICConnFactory {
+func MakeQUICFactory(targets *addressSource, tlsConf *tls.Config) pool.QUICConnFactory {
 	return func(ctx context.Context) (quic.Connection, error) {
 		return targets.dialQUIC(ctx, func(dialCtx context.Context, addr string) (quic.EarlyConnection, error) {
 			return quic.DialAddrEarly(dialCtx, addr, tlsConf, &quic.Config{KeepAlivePeriod: 30 * time.Second})

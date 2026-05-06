@@ -1,0 +1,10 @@
+./address_source.go
+./doh.go
+./doq.go
+./dot.go
+./manager.go
+./plain_dns.go
+./upstream.go
+./bootstrap_test.go
+./doq_test.go
+./manager_test.go

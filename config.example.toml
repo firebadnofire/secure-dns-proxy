@@ -5,14 +5,25 @@ upstream_policy = "round_robin"
 upstream_race_fanout = 2
 prewarm_pools = true
 
-[[upstreams]]
-url = "https://doh.archuser.org/dns-query"
+[bootstrap]
+servers = ["1.1.1.1", "1.0.0.1"]
 
-[[upstreams]]
-url = "tls://doh.archuser.org:853"
+[upstreams]
+dns = ["1.1.1.1", "1.0.0.1"]
+doh = ["https://doh.archuser.org/dns-query", "https://cloudflare-dns.com/dns-query"]
+dot = ["tls://doh.archuser.org:853", "tls://cloudflare-dns.com:853"]
+doq = ["quic://dns.adguard-dns.com:853", "quic://dns.quad9.net:853"]
 
-[[upstreams]]
-url = "quic://dns.adguard-dns.com:853"
+[hosts]
+"doh.archuser.org" = ["172.233.221.243", "2600:3c06::2000:53ff:fe9a:7714"]
+"cloudflare-dns.com" = ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"]
+
+[upstream_refresh]
+enabled = true
+refresh_threshold = "30s"
+min_ttl = "30s"
+failure_retry = "30s"
+jitter_percent = 20
 
 [cache]
 enabled = true

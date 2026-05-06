@@ -14,8 +14,8 @@ import (
 
 // DoT implements DNS-over-TLS exchanges using a connection pool.
 type DoT struct {
-	// address is the TLS endpoint host:port.
-	address string
+	// source provides refreshable addresses for the upstream.
+	source *addressSource
 	// pool provides reusable TLS connections.
 	pool *pool.TLSConnPool
 	// health tracks failures for circuit breaking.
@@ -27,12 +27,12 @@ type DoT struct {
 }
 
 // NewDoT constructs a DoT upstream with pooled TLS connections.
-func NewDoT(cfg config.UpstreamConfig, pool *pool.TLSConnPool, trackTraffic bool, healthEnabled bool) *DoT {
-	return &DoT{address: cfg.URL, pool: pool, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
+func NewDoT(cfg config.UpstreamConfig, source *addressSource, pool *pool.TLSConnPool, trackTraffic bool, healthEnabled bool) *DoT {
+	return &DoT{source: source, pool: pool, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
 }
 
 // ID returns the upstream address used for logging and selection.
-func (d *DoT) ID() string { return d.address }
+func (d *DoT) ID() string { return net.JoinHostPort(d.source.hostname, d.source.port) }
 
 // Healthy reports whether the upstream is eligible for use.
 func (d *DoT) Healthy() bool { return d.health.healthy() }
@@ -102,7 +102,7 @@ func (d *DoT) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (
 
 // MakeTLSFactory returns a dialer for the TLS pool.
 // It wraps the net.Dialer and TLS config into a factory callback.
-func MakeTLSFactory(targets *bootstrapDialTargets, tlsConfig *tls.Config, dialer *net.Dialer) pool.TLSConnFactory {
+func MakeTLSFactory(targets *addressSource, tlsConfig *tls.Config, dialer *net.Dialer) pool.TLSConnFactory {
 	return func(ctx context.Context) (net.Conn, error) {
 		rawConn, err := targets.dialContext(ctx, "tcp", dialer.DialContext)
 		if err != nil {

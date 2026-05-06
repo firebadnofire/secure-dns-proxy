@@ -1,0 +1,3 @@
+# test log
+getenv QUIC_GO_DISABLE_ECN
+getenv QUIC_GO_DISABLE_ECN

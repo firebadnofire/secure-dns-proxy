@@ -118,14 +118,25 @@ upstream_policy = "round_robin"
 upstream_race_fanout = 2
 prewarm_pools = true
 
-[[upstreams]]
-url = "https://doh.archuser.org/dns-query"
+[bootstrap]
+servers = ["1.1.1.1", "1.0.0.1"]
 
-[[upstreams]]
-url = "tls://doh.archuser.org:853"
+[upstreams]
+dns = ["1.1.1.1", "1.0.0.1"]
+doh = ["https://doh.archuser.org/dns-query", "https://cloudflare-dns.com/dns-query"]
+dot = ["tls://doh.archuser.org:853", "tls://cloudflare-dns.com:853"]
+doq = ["quic://dns.adguard-dns.com:853", "quic://dns.quad9.net:853"]
 
-[[upstreams]]
-url = "quic://dns.adguard-dns.com:853"
+[hosts]
+"doh.archuser.org" = ["172.233.221.243", "2600:3c06::2000:53ff:fe9a:7714"]
+"cloudflare-dns.com" = ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"]
+
+[upstream_refresh]
+enabled = true
+refresh_threshold = "30s"
+min_ttl = "30s"
+failure_retry = "30s"
+jitter_percent = 20
 
 [cache]
 enabled = true
@@ -172,9 +183,12 @@ query = "."
 > due to firewalls or ALPN mismatches), the first live query may spend extra time establishing connections before reusing pool
 > state for subsequent lookups.
 
-> **Bootstrap tip:** `bootstrap` accepts either a single IP string or an array of IP strings. When set for DoH, DoT, or DoQ,
-> the proxy dials those IPs directly without using system DNS, while still using the upstream hostname for HTTP host routing,
-> TLS SNI, and certificate validation. `bootstrap_strategy` defaults to `failover` and also supports `race` and `round_robin`.
+> **Bootstrap tip:** `[bootstrap].servers` is used only during startup to resolve hostname-based secure upstreams. If omitted,
+> the proxy defaults to `1.1.1.1` and `1.0.0.1`, chooses one bootstrap resolver once at startup, caches all returned A/AAAA
+> answers, and then refreshes those cached address sets asynchronously before expiry.
+
+> **Host overrides:** `[hosts]` entries take precedence over bootstrap resolution. When a hostname is present in `[hosts]`,
+> the proxy uses the configured IPs directly while preserving the original hostname for HTTP authority and TLS SNI.
 
 ### Notes on architecture changes
 - **DoH transport reuse:** a single tuned `http.Client` backs all DoH requests to preserve keep-alives.

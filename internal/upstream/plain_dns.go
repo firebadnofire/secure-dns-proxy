@@ -14,8 +14,8 @@ import (
 
 // PlainDNS speaks classic UDP/TCP DNS to an upstream resolver.
 type PlainDNS struct {
-	// address is the host:port of the upstream.
-	address string
+	// source provides refreshable addresses for the upstream.
+	source *addressSource
 	// timeout bounds the UDP/TCP exchange.
 	timeout time.Duration
 	// health tracks failure counts and cooldowns.
@@ -27,12 +27,14 @@ type PlainDNS struct {
 }
 
 // NewPlainDNS constructs a PlainDNS upstream with health tracking.
-func NewPlainDNS(cfg config.UpstreamConfig, timeout time.Duration, trackTraffic bool, healthEnabled bool) *PlainDNS {
-	return &PlainDNS{address: cfg.URL, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
+func NewPlainDNS(cfg config.UpstreamConfig, source *addressSource, timeout time.Duration, trackTraffic bool, healthEnabled bool) *PlainDNS {
+	return &PlainDNS{source: source, timeout: timeout, health: newHealthState(cfg.MaxFailures, cfg.Cooldown.Duration()), trackTraffic: trackTraffic, healthEnabled: healthEnabled}
 }
 
 // ID returns a stable identifier used in logs and metrics.
-func (p *PlainDNS) ID() string { return fmt.Sprintf("dns://%s", p.address) }
+func (p *PlainDNS) ID() string {
+	return fmt.Sprintf("dns://%s", net.JoinHostPort(p.source.hostname, p.source.port))
+}
 
 // Healthy reports whether the upstream is eligible for use.
 func (p *PlainDNS) Healthy() bool { return p.health.healthy() }
@@ -59,15 +61,7 @@ func (p *PlainDNS) Probe(ctx context.Context, msg *dns.Msg) error {
 
 // doExchange performs UDP exchange, falling back to TCP when truncated.
 func (p *PlainDNS) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bool) (*dns.Msg, error) {
-	c := &dns.Client{Net: "udp", Timeout: p.timeout}
-	resp, rtt, err := c.ExchangeContext(ctx, msg, p.address)
-	_ = rtt
-	if err == nil && resp != nil && resp.Truncated {
-		// Retry over TCP if the UDP response was truncated.
-		c.Net = "tcp"
-		resp, rtt, err = c.ExchangeContext(ctx, msg, p.address)
-		_ = rtt
-	}
+	resp, err := p.source.exchangeDNS(ctx, msg, p.timeout, nil)
 	if err != nil {
 		// Record failure when health tracking is enabled.
 		if recordHealth {
@@ -79,25 +73,4 @@ func (p *PlainDNS) doExchange(ctx context.Context, msg *dns.Msg, recordHealth bo
 		p.RecordSuccess()
 	}
 	return resp, nil
-}
-
-// BootstrapResolver resolves hostnames using the system resolver when upstream
-// is configured with a hostname instead of an IP address.
-func BootstrapResolver(ctx context.Context, hostport string) (string, error) {
-	host, port, err := net.SplitHostPort(hostport)
-	if err != nil {
-		return hostport, nil
-	}
-	ip := net.ParseIP(host)
-	if ip != nil {
-		return hostport, nil
-	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return "", err
-	}
-	if len(addrs) == 0 {
-		return "", fmt.Errorf("no ip for %s", host)
-	}
-	return net.JoinHostPort(addrs[0].IP.String(), port), nil
 }

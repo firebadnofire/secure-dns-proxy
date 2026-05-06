@@ -75,10 +75,7 @@ func newServerInstance(cfgPath string, existingCache *cache.Cache) (*serverInsta
 	srv := ingress.New(cfg.BindAddress, cfg.Port, res, log, metricsSink)
 
 	healthCtx, cancel := context.WithCancel(context.Background())
-	if cfg.HealthChecks.Enabled {
-		// Kick off health probes in the background.
-		mgr.StartHealthChecks(healthCtx)
-	}
+	mgr.StartBackground(healthCtx)
 
 	return &serverInstance{cfg: cfg, cache: cacheInstance, mgr: mgr, metrics: metricsSink, srv: srv, log: log, healthCancel: cancel}, nil
 }

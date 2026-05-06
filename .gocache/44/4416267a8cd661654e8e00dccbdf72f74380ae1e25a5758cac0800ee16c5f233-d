@@ -1,0 +1,44 @@
+# test log
+getenv TMPDIR
+getenv TMPDIR
+getenv TMPDIR
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadParsesCanonicalSchema399720857/001/config.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadUsesBootstrapDefaults3689400427/001/defaults.toml
+getenv TMPDIR
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadParsesCanonicalSchema399720857/001/config.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadMissingConfig2286497624/001/missing.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadUsesBootstrapDefaults3689400427/001/defaults.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_doh_scheme1795331092/001/bad doh scheme.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+getenv BURNTSUSHI_TOML_110
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_doh_scheme1795331092/001/bad doh scheme.toml
+getenv BURNTSUSHI_TOML_110
+getenv TMPDIR
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+getenv TMPDIR
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+getenv BURNTSUSHI_TOML_110
+getenv TMPDIR
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_duration1802944591/001/bad duration.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_duration1802944591/001/bad duration.toml
+getenv TMPDIR
+getenv BURNTSUSHI_TOML_110
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_hosts_ip2947796296/001/bad hosts ip.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+getenv TMPDIR
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_bootstrap_ip1365961041/001/bad bootstrap ip.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_hosts_ip2947796296/001/bad hosts ip.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_jitter2801644629/001/bad jitter.toml
+getenv BURNTSUSHI_TOML_110
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_bootstrap_ip1365961041/001/bad bootstrap ip.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesbad_jitter2801644629/001/bad jitter.toml
+getenv BURNTSUSHI_TOML_110
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesno_upstreams76843513/001/no upstreams.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+getenv BURNTSUSHI_TOML_110
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T/TestLoadRejectsInvalidEntriesno_upstreams76843513/001/no upstreams.toml
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+getenv BURNTSUSHI_TOML_110
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
+open /var/folders/m0/khg9l5y96kn2hj48bnkb6hm40000gn/T
