@@ -168,6 +168,84 @@ func TestBuildManagerRejectsInvalidBootstrapProgrammaticConfig(t *testing.T) {
 	}
 }
 
+func TestHostOverrideUpstreamBeatsBootstrapServersAtStartup(t *testing.T) {
+	tlsConf, _ := testTLSConfig(t, "resolver.test")
+
+	var bootstrapQuestions atomic.Int32
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsConf)
+	if err != nil {
+		t.Fatalf("tls.Listen() error = %v", err)
+	}
+	defer ln.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/dns-query", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		req := new(dns.Msg)
+		if err := req.Unpack(body); err != nil {
+			t.Fatalf("Unpack() error = %v", err)
+		}
+		if len(req.Question) != 1 {
+			t.Fatalf("question count = %d, want 1", len(req.Question))
+		}
+		if req.Question[0].Name == "target.test." {
+			bootstrapQuestions.Add(1)
+		}
+
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		switch req.Question[0].Qtype {
+		case dns.TypeA:
+			resp.Answer = []dns.RR{
+				&dns.A{Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 30}, A: net.IPv4(127, 0, 0, 2)},
+			}
+		case dns.TypeAAAA:
+			resp.Rcode = dns.RcodeNameError
+		}
+		packed, err := resp.Pack()
+		if err != nil {
+			t.Fatalf("Pack() error = %v", err)
+		}
+		w.Header().Set("content-type", "application/dns-message")
+		_, _ = w.Write(packed)
+	})
+	httpSrv := &http.Server{Handler: mux}
+	defer httpSrv.Shutdown(context.Background())
+	go func() {
+		_ = httpSrv.Serve(ln)
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	cfg := config.Default()
+	cfg.InsecureTLS = true
+	cfg.HealthChecks.Enabled = false
+	cfg.PrewarmPools = false
+	cfg.Bootstrap.Servers = []string{"192.0.2.1"}
+	cfg.UpstreamGroups.DoH = []string{"https://resolver.test:" + strconv.Itoa(port) + "/dns-query"}
+	cfg.UpstreamGroups.DNS = []string{"target.test"}
+	cfg.Hosts = config.HostOverrides{"resolver.test": config.IPList{net.ParseIP("127.0.0.1")}}
+
+	mgr, _, err := BuildManager(cfg, logging.New(logging.Level("error")), nil)
+	if err != nil {
+		t.Fatalf("BuildManager() error = %v", err)
+	}
+
+	src := mgr.refreshCache.entries["target.test"]
+	if src == nil {
+		t.Fatal("target.test address source not created")
+	}
+	state := src.snapshot()
+	if len(state.addrs) != 1 || state.addrs[0] != "127.0.0.2:53" {
+		t.Fatalf("target.test bootstrap addresses = %v, want [127.0.0.2:53]", state.addrs)
+	}
+	if bootstrapQuestions.Load() == 0 {
+		t.Fatal("startup bootstrap did not query resolver.test upstream")
+	}
+}
+
 func TestDoHBootstrapPreservesHostAndSNI(t *testing.T) {
 	tlsConf, serverName := testTLSConfig(t, "resolver.test")
 

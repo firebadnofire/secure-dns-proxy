@@ -9,6 +9,7 @@ prewarm_pools = true
 servers = ["1.1.1.1", "1.0.0.1"]
 
 [upstreams]
+# dns = ["1.1.1.1", "1.0.0.1"]
 doh = ["https://doh.archuser.org/dns-query"]
 dot = ["tls://doh.archuser.org:853"]
 doq = ["quic://dns.adguard-dns.com:853"]

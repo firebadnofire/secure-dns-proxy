@@ -1,11 +1,15 @@
 package upstream
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -234,20 +238,40 @@ func (s *addressSource) promote(addr string) {
 
 type addressResolver struct {
 	bootstrapServer string
+	bootstrapUp     *config.UpstreamConfig
+	bootstrapSource *addressSource
+	insecureTLS     bool
 	timeout         time.Duration
 	rng             *rand.Rand
 }
 
 func newAddressResolver(cfg config.Config) (*addressResolver, error) {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	resolver := &addressResolver{
+		timeout:     cfg.Timeouts.Read.Duration(),
+		insecureTLS: cfg.InsecureTLS,
+		rng:         rng,
+	}
+	for _, up := range cfg.Upstreams {
+		if len(up.StaticHostIPs) == 0 {
+			continue
+		}
+		src, err := newAddressSource(up.Hostname, up.Port, "failover", up.StaticHostIPs, true)
+		if err != nil {
+			return nil, err
+		}
+		selected := up
+		resolver.bootstrapUp = &selected
+		resolver.bootstrapSource = src
+		return resolver, nil
+	}
+
 	server, err := chooseBootstrapServer(cfg.Bootstrap.Servers)
 	if err != nil {
 		return nil, err
 	}
-	return &addressResolver{
-		bootstrapServer: server,
-		timeout:         cfg.Timeouts.Read.Duration(),
-		rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
-	}, nil
+	resolver.bootstrapServer = server
+	return resolver, nil
 }
 
 func chooseBootstrapServer(servers []string) (string, error) {
@@ -274,11 +298,164 @@ func (r *addressResolver) resolveBootstrap(ctx context.Context, hostname string)
 	if ip := net.ParseIP(hostname); ip != nil {
 		return resolvedLookup{IPs: []net.IP{append(net.IP(nil), ip...)}, TTL: time.Hour}, nil
 	}
+	if r.bootstrapUp != nil && r.bootstrapSource != nil {
+		return r.resolveViaConfiguredUpstream(ctx, hostname)
+	}
 	ips, ttl, err := queryIPs(ctx, r.bootstrapServer, hostname, r.timeout)
 	if err != nil {
 		return resolvedLookup{}, err
 	}
 	return resolvedLookup{IPs: ips, TTL: ttl}, nil
+}
+
+func (r *addressResolver) resolveViaConfiguredUpstream(ctx context.Context, hostname string) (resolvedLookup, error) {
+	var ips []net.IP
+	var minTTL time.Duration
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		msg := new(dns.Msg)
+		msg.SetQuestion(dns.Fqdn(hostname), qtype)
+
+		resp, err := r.exchangeBootstrapQuery(ctx, msg)
+		if err != nil {
+			if len(ips) != 0 {
+				continue
+			}
+			return resolvedLookup{}, err
+		}
+		for _, rr := range resp.Answer {
+			switch v := rr.(type) {
+			case *dns.A:
+				ips = append(ips, append(net.IP(nil), v.A...))
+				minTTL = lowerTTL(minTTL, time.Duration(v.Hdr.Ttl)*time.Second)
+			case *dns.AAAA:
+				ips = append(ips, append(net.IP(nil), v.AAAA...))
+				minTTL = lowerTTL(minTTL, time.Duration(v.Hdr.Ttl)*time.Second)
+			}
+		}
+	}
+	if len(ips) == 0 {
+		return resolvedLookup{}, fmt.Errorf("no usable IPs for %s", hostname)
+	}
+	if minTTL <= 0 {
+		minTTL = time.Minute
+	}
+	return resolvedLookup{IPs: ips, TTL: minTTL}, nil
+}
+
+func (r *addressResolver) exchangeBootstrapQuery(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	if r.bootstrapUp == nil || r.bootstrapSource == nil {
+		return nil, fmt.Errorf("no configured bootstrap upstream")
+	}
+	switch r.bootstrapUp.Protocol {
+	case "dns":
+		return r.bootstrapSource.exchangeDNS(ctx, msg, r.timeout, nil)
+	case "https":
+		return r.exchangeBootstrapDoH(ctx, msg)
+	case "tls":
+		return r.exchangeBootstrapDoT(ctx, msg)
+	case "quic":
+		return r.exchangeBootstrapDoQ(ctx, msg)
+	default:
+		return nil, fmt.Errorf("unsupported bootstrap protocol %s", r.bootstrapUp.Protocol)
+	}
+}
+
+func (r *addressResolver) exchangeBootstrapDoH(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	payload, err := msg.Pack()
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{Timeout: r.timeout}
+	tlsConf := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: r.insecureTLS,
+		ServerName:         r.bootstrapUp.Hostname,
+	}
+	transport := &http.Transport{
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: r.timeout,
+		TLSClientConfig:     tlsConf,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return r.bootstrapSource.dialContext(ctx, network, dialer.DialContext)
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.bootstrapUp.URL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("content-type", "application/dns-message")
+	req.Header.Set("accept", "application/dns-message")
+
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("doh bootstrap upstream returned %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	dnsResp := new(dns.Msg)
+	if err := dnsResp.Unpack(body); err != nil {
+		return nil, err
+	}
+	return dnsResp, nil
+}
+
+func (r *addressResolver) exchangeBootstrapDoT(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	dialer := &net.Dialer{Timeout: r.timeout}
+	tlsConf := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: r.insecureTLS,
+		ServerName:         r.bootstrapUp.Hostname,
+	}
+	conn, err := MakeTLSFactory(r.bootstrapSource, tlsConf, dialer)(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	dnsConn := &dns.Conn{Conn: conn}
+	if err := dnsConn.WriteMsg(msg); err != nil {
+		return nil, err
+	}
+	return dnsConn.ReadMsg()
+}
+
+func (r *addressResolver) exchangeBootstrapDoQ(ctx context.Context, msg *dns.Msg) (*dns.Msg, error) {
+	tlsConf := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: r.insecureTLS,
+		ServerName:         r.bootstrapUp.Hostname,
+		NextProtos:         []string{"doq"},
+	}
+	conn, err := MakeQUICFactory(r.bootstrapSource, tlsConf)(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.CloseWithError(0, "")
+
+	stream, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = stream.SetDeadline(deadline)
+	}
+	if err := writeDoQMessage(stream, msg); err != nil {
+		stream.CancelWrite(0)
+		return nil, err
+	}
+	if err := stream.Close(); err != nil {
+		stream.CancelWrite(0)
+		return nil, err
+	}
+	return readDoQMessage(stream)
 }
 
 func queryIPs(ctx context.Context, server, hostname string, timeout time.Duration) ([]net.IP, time.Duration, error) {
