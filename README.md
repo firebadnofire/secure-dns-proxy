@@ -120,8 +120,6 @@ prewarm_pools = true
 
 [[upstreams]]
 url = "https://doh.archuser.org/dns-query"
-bootstrap = ["9.9.9.9", "149.112.112.112"]
-bootstrap_strategy = "failover"
 
 [[upstreams]]
 url = "tls://doh.archuser.org:853"

@@ -138,6 +138,7 @@ func TestDoHBootstrapPreservesHostAndSNI(t *testing.T) {
 	tlsConf, serverName := testTLSConfig(t, "resolver.test")
 
 	var hostHeader atomic.Value
+	var protoMajor atomic.Int32
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsConf)
 	if err != nil {
 		t.Fatalf("tls.Listen() error = %v", err)
@@ -147,6 +148,7 @@ func TestDoHBootstrapPreservesHostAndSNI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/dns-query", func(w http.ResponseWriter, r *http.Request) {
 		hostHeader.Store(r.Host)
+		protoMajor.Store(int32(r.ProtoMajor))
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("ReadAll() error = %v", err)
@@ -198,6 +200,9 @@ func TestDoHBootstrapPreservesHostAndSNI(t *testing.T) {
 	}
 	if got, _ := hostHeader.Load().(string); got != "resolver.test:"+strconv.Itoa(port) {
 		t.Fatalf("host header = %q, want resolver.test:%d", got, port)
+	}
+	if got := protoMajor.Load(); got != 2 {
+		t.Fatalf("http proto major = %d, want 2", got)
 	}
 	if got, _ := serverName.Load().(string); got != "resolver.test" {
 		t.Fatalf("SNI = %q, want resolver.test", got)

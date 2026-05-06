@@ -59,6 +59,7 @@ func BuildManager(cfg config.Config, log logging.Logger, metrics *metrics.Metric
 		MaxIdleConns:        cfg.Pools.HTTPTransport.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Pools.HTTPTransport.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.Pools.HTTPTransport.IdleConnTimeout.Duration(),
+		ForceAttemptHTTP2:   true,
 		TLSHandshakeTimeout: cfg.Pools.HTTPTransport.TLSHandshakeTimeout.Duration(),
 		TLSClientConfig:     tlsConfig.Clone(),
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
